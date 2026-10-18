@@ -1,30 +1,27 @@
 use std::ops::Range;
 use std::rc::Rc;
 
-use eve_wrench_core::{AppData, BackupEntry, ProfileData, ServerData, SettingsEntry, SettingsKind};
+use eve_wrench_core::{
+    AppData, BackupEntry, ProfileData, Server, ServerData, SettingsEntry, SettingsKind,
+};
 use gpui_kit::assets::IconName;
+use gpui_kit::base::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::Input;
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use rust_i18n::t;
 
+use super::entry_columns::{EntryTableLayout, column_id, column_label, entry_column_text};
+use super::ordering::compare_entries;
+use super::scroll::visible_rows;
 use super::title_bar::view_action;
 use super::{DragPreview, DraggedSettings, MainView, Sort, SortColumn, Source, Tab};
 use crate::table::{self, Column};
 use crate::ui::{self, StyleExt as _};
-
-// Avatar, name, modified, row actions
-const ENTRY_COLUMNS: [Column; 4] = [
-    Column::fixed(px(36.)),
-    Column::fill(),
-    Column::fixed(px(112.)),
-    Column::fixed(px(96.)).end(),
-];
 
 // Selection, avatar, name, date, menu
 const BACKUP_COLUMNS: [Column; 5] = [
@@ -39,9 +36,35 @@ const BACKUP_COLUMNS: [Column; 5] = [
 struct RowLabels {
     source: SharedString,
     target: SharedString,
+    source_path: Option<String>,
+}
+
+// Data and search changes rebuild ordering; scrolling and moving the window reuse it.
+pub(super) struct BrowserRows {
+    data: Rc<AppData>,
+    server: Server,
+    profile_path: Option<String>,
+    query: super::search::SearchQuery,
+    account_sort: Sort,
+    character_sort: Sort,
+    locale: String,
+    minute: u64,
+    sections: Vec<(usize, SettingsKind, Vec<usize>)>,
 }
 
 impl MainView {
+    pub(super) fn entry_matches_search(&self, entry: &SettingsEntry) -> bool {
+        if self.entry_query.is_empty() {
+            return true;
+        }
+        let kind = match entry.kind {
+            SettingsKind::User => t!("list.accounts"),
+            SettingsKind::Char => t!("list.characters"),
+        };
+        self.entry_query
+            .matches(entry, &kind, &ui::relative_time(entry.modified_time))
+    }
+
     pub(super) fn render_browser(
         &mut self,
         window: &mut Window,
@@ -80,6 +103,40 @@ impl MainView {
             .overflow_hidden()
             .text_sm()
             .child(self.render_tab_strip(&tabs, active, &data, cx))
+            .when_some(active, |this, active| match active {
+                Tab::Server(server) => this.children(
+                    data.servers
+                        .iter()
+                        .find(|s| s.info.id == server)
+                        .map(|server| self.render_profile_controls(server, &data, cx)),
+                ),
+                Tab::Backups => this,
+            })
+            .when_some(active, |this, active| match active {
+                Tab::Server(server) => this.children(
+                    data.servers
+                        .iter()
+                        .find(|s| s.info.id == server)
+                        .map(|server| self.render_default_sources(&data, server, cx)),
+                ),
+                Tab::Backups => this,
+            })
+            .when(matches!(active, Some(Tab::Server(_))), |this| {
+                this.child(
+                    h_flex()
+                        .flex_none()
+                        .px_4()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .child(
+                            Input::new(&self.entry_search)
+                                .small()
+                                .prefix(Icon::new(IconName::Search).xsmall())
+                                .cleanable(true),
+                        ),
+                )
+            })
             .children(content)
     }
 
@@ -156,7 +213,7 @@ impl MainView {
                         if this.tab != Some(tab) {
                             this.tab = Some(tab);
                             this.alias_edit = None;
-                            this.browser_scroll.set_offset(point(px(0.), px(0.)));
+                            this.reset_browser_scroll();
                             cx.notify();
                         }
                     }))
@@ -173,167 +230,233 @@ impl MainView {
             .children(items)
     }
 
-    // Sections are laid out with fixed heights, so each header's offset in the
-    // scroll content is known up front. On every scroll the view re-renders
-    // and pins a copy of the current header to the top; the next header
-    // pushes it out as it arrives.
+    fn ordered_browser_rows(&mut self, server: &ServerData, data: &Rc<AppData>) -> Rc<BrowserRows> {
+        let profile_path = self
+            .selected_profile(server)
+            .map(|profile| profile.path.clone());
+        let locale = rust_i18n::locale().to_string();
+        let minute = if self.entry_query.is_empty() {
+            0
+        } else {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                / 60
+        };
+        if let Some(rows) = &self.browser_rows
+            && Rc::ptr_eq(&rows.data, data)
+            && rows.server == server.info.id
+            && rows.profile_path == profile_path
+            && rows.query == self.entry_query
+            && rows.account_sort == self.account_sort
+            && rows.character_sort == self.character_sort
+            && rows.locale == locale
+            && rows.minute == minute
+        {
+            return rows.clone();
+        }
+        let view: &MainView = self;
+        let sections = server
+            .profiles
+            .iter()
+            .enumerate()
+            .filter(|(_, profile)| Some(&profile.path) == profile_path.as_ref())
+            .flat_map(|(index, profile)| {
+                [SettingsKind::Char, SettingsKind::User]
+                    .into_iter()
+                    .filter_map(move |kind| {
+                        let mut entries: Vec<usize> = profile
+                            .entries(kind)
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, entry)| view.entry_matches_search(entry))
+                            .map(|(index, _)| index)
+                            .collect();
+                        view.sort_entries(&mut entries, profile, kind);
+                        (!entries.is_empty()).then_some((index, kind, entries))
+                    })
+            })
+            .collect();
+        let rows = Rc::new(BrowserRows {
+            data: data.clone(),
+            server: server.info.id,
+            profile_path,
+            query: self.entry_query.clone(),
+            account_sort: self.account_sort,
+            character_sort: self.character_sort,
+            locale,
+            minute,
+            sections,
+        });
+        self.browser_rows = Some(rows.clone());
+        rows
+    }
+
     fn render_server(
-        &self,
+        &mut self,
         server: &ServerData,
         data: &Rc<AppData>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let labels = RowLabels {
-            source: t!("actions.source").to_string().into(),
-            target: t!("actions.target").to_string().into(),
+        let ordered = self.ordered_browser_rows(server, data);
+        let Some(profile) = self.selected_profile(server) else {
+            return div()
+                .p_4()
+                .child(t!("profiles.none").to_string())
+                .into_any_element();
         };
-        let sections: Vec<(&ProfileData, SettingsKind)> = server
-            .profiles
-            .iter()
-            .flat_map(|profile| {
-                [SettingsKind::User, SettingsKind::Char]
-                    .into_iter()
-                    .filter(|kind| !profile.entries(*kind).is_empty())
-                    .map(move |kind| (profile, kind))
-            })
-            .collect();
-
-        let mut tops = Vec::with_capacity(sections.len() + 1);
-        let mut y = px(0.);
-        for (profile, kind) in &sections {
-            tops.push(y);
-            y += ui::HEADER_HEIGHT + ui::ROW_HEIGHT * profile.entries(*kind).len() as f32;
-        }
-        tops.push(y);
-
-        let scroll_top = -self.browser_scroll.offset().y;
-        let pinned = tops.iter().rposition(|top| *top < scroll_top).map(|index| {
-            let next = tops.get(index + 1).copied();
-            let shift = next
-                .map(|next| (next - scroll_top - ui::HEADER_HEIGHT).min(px(0.)))
-                .unwrap_or(px(0.));
-            let header = match sections.get(index) {
-                Some((profile, kind)) => self.profile_header(profile, *kind, "pinned", cx),
-                None => self.extra_header(cx),
-            };
-            div().absolute().top(shift).left_0().right_0().child(
-                header.bg(cx.theme().background).child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .bg(cx.theme().muted.opacity(0.35)),
-                ),
-            )
-        });
-
-        let section_elements: Vec<AnyElement> = sections
-            .iter()
-            .map(|(profile, kind)| {
-                let mut entries: Vec<&SettingsEntry> = profile.entries(*kind).iter().collect();
-                self.sort_entries(&mut entries, *kind);
-                let header = self.profile_header(profile, *kind, "inline", cx);
-                let rows: Vec<AnyElement> = entries
-                    .into_iter()
-                    .map(|entry| self.render_entry_row(entry, data, &labels, window, cx))
-                    .collect();
-                v_flex().child(header).children(rows).into_any_element()
-            })
-            .collect();
-
-        let server_path = server.info.server_path.clone();
-        let muted = cx.theme().muted_foreground;
-        let content = v_flex()
-            .children(section_elements)
-            .child(self.extra_header(cx))
-            .child(
-                h_flex()
-                    .justify_between()
-                    .gap_6()
-                    .px_4()
-                    .py_3()
-                    .border_b_1()
-                    .border_color(cx.theme().border.opacity(0.6))
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .gap_0p5()
-                            .child(
-                                div()
-                                    .font_medium()
-                                    .child(t!("extra.alwaysShowBracketText").to_string()),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(muted)
-                                    .whitespace_normal()
-                                    .child(t!("extra.alwaysShowBracketTextDesc").to_string()),
-                            ),
-                    )
-                    .child(
-                        div().flex_none().child(
-                            Switch::new(SharedString::from(format!(
-                                "brackets-{}",
-                                server.info.id.id()
-                            )))
-                            .checked(server.info.brackets_always_show)
-                            .on_change(cx.listener(
-                                move |this, enabled: &bool, window, cx| {
-                                    this.set_brackets_always_show(
-                                        server_path.clone(),
-                                        *enabled,
-                                        window,
-                                        cx,
-                                    )
-                                },
-                            )),
-                        ),
-                    ),
-            );
-
-        // Clipped so a header being pushed out never paints over the tabs
-        div()
-            .relative()
+        h_flex()
             .flex_1()
             .min_h_0()
-            .overflow_hidden()
-            .child(
-                div()
-                    .id("browser-scroll")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.browser_scroll)
-                    .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
-                    .child(content),
+            .items_stretch()
+            .children(
+                [SettingsKind::Char, SettingsKind::User]
+                    .into_iter()
+                    .map(|kind| {
+                        let entries = ordered
+                            .sections
+                            .iter()
+                            .find(|(_, section_kind, _)| *section_kind == kind)
+                            .map(|(_, _, entries)| entries.as_slice())
+                            .unwrap_or_default();
+                        self.render_entry_table(profile, kind, entries, data, window, cx)
+                    }),
             )
-            .children(pinned)
             .into_any_element()
     }
 
-    fn sort_entries(&self, entries: &mut [&SettingsEntry], kind: SettingsKind) {
+    // Each table keeps its header outside its independent, virtualized row scroller.
+    fn render_entry_table(
+        &self,
+        profile: &ProfileData,
+        kind: SettingsKind,
+        entries: &[usize],
+        data: &Rc<AppData>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let scroll = self.table_scroll(kind).handle.clone();
+        let layout = EntryTableLayout::new(kind, self.store.read(cx).config().character_columns);
+        let viewport = scroll
+            .bounds()
+            .size
+            .height
+            .max(window.viewport_size().height);
+        let range = visible_rows(
+            entries.len(),
+            0.,
+            -scroll.offset().y.as_f32(),
+            viewport.as_f32(),
+            ui::ROW_HEIGHT.as_f32(),
+        );
+        let labels = RowLabels {
+            source: t!("actions.source").to_string().into(),
+            target: t!("actions.target").to_string().into(),
+            source_path: self
+                .source_for(kind, cx)
+                .map(|source| source.path().to_string()),
+        };
+        let rows: Vec<_> = entries[range.clone()]
+            .iter()
+            .map(|index| {
+                self.render_entry_row(
+                    &profile.entries(kind)[*index],
+                    data,
+                    &labels,
+                    &layout,
+                    window,
+                    cx,
+                )
+            })
+            .collect();
+        let content = v_flex()
+            .w_full()
+            .min_w(layout.min_width)
+            .pr_4()
+            .pb_4()
+            .child(div().h(ui::ROW_HEIGHT * range.start as f32).flex_none())
+            .children(rows)
+            .child(
+                div()
+                    .h(ui::ROW_HEIGHT * (entries.len() - range.end) as f32)
+                    .flex_none(),
+            )
+            .when(entries.is_empty(), |this| {
+                this.child(
+                    div().p_4().text_color(cx.theme().muted_foreground).child(
+                        if self.entry_query.is_empty() {
+                            t!("list.noEntries")
+                        } else {
+                            t!("list.noMatchingEntries")
+                        }
+                        .to_string(),
+                    ),
+                )
+            });
+        v_flex()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .overflow_hidden()
+            .when(kind == SettingsKind::Char, |this| {
+                this.border_r_1().border_color(cx.theme().border)
+            })
+            .child(self.profile_header(
+                profile,
+                kind,
+                entries.len(),
+                &layout,
+                scroll.offset().x,
+                cx,
+            ))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .id(match kind {
+                                SettingsKind::User => "accounts-scroll",
+                                SettingsKind::Char => "characters-scroll",
+                            })
+                            .size_full()
+                            .overflow_scroll()
+                            .track_scroll(&scroll)
+                            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
+                            .child(content),
+                    )
+                    .child(self.browser_wheel_layer(kind, cx))
+                    .child(
+                        Scrollbar::new(&scroll)
+                            .id(match kind {
+                                SettingsKind::Char => "characters-scrollbar",
+                                SettingsKind::User => "accounts-scrollbar",
+                            })
+                            .mode(ScrollbarMode::Always),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn sort_entries(&self, entries: &mut [usize], profile: &ProfileData, kind: SettingsKind) {
         let sort = match kind {
             SettingsKind::User => self.account_sort,
             SettingsKind::Char => self.character_sort,
         };
         entries.sort_by(|a, b| {
-            sort.apply(match sort.column {
-                SortColumn::Name => a
-                    .sort_name()
-                    .to_lowercase()
-                    .cmp(&b.sort_name().to_lowercase()),
-                SortColumn::Time => a.modified_time.cmp(&b.modified_time),
-            })
+            sort.apply(compare_entries(
+                &profile.entries(kind)[*a],
+                &profile.entries(kind)[*b],
+                sort.column,
+            ))
         });
     }
 
-    fn extra_header(&self, cx: &App) -> Div {
-        ui::section_header(cx).child(ui::section_title(t!("extra.title").to_string()))
-    }
-
-    // The section header doubles as the column header: the title sorts by
-    // name, the date label sorts by date.
+    // Only column headers sort rows; table titles are plain labels.
     fn sort_control(
         &self,
         id: SharedString,
@@ -342,7 +465,7 @@ impl MainView {
         sort: Sort,
         on_sort: impl Fn(&mut Self, SortColumn) + 'static,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    ) -> AnyElement {
         let arrow = (sort.column == column).then(|| {
             Icon::new(if sort.ascending {
                 IconName::ChevronUp
@@ -363,13 +486,17 @@ impl MainView {
                 on_sort(this, column);
                 cx.notify();
             }))
+            .test_support()
+            .into_any_element()
     }
 
     fn profile_header(
         &self,
         profile: &ProfileData,
         kind: SettingsKind,
-        variant: &str,
+        count: usize,
+        layout: &EntryTableLayout,
+        horizontal_offset: Pixels,
         cx: &mut Context<Self>,
     ) -> Div {
         let sort = match kind {
@@ -380,69 +507,83 @@ impl MainView {
             SettingsKind::User => t!("list.accounts"),
             SettingsKind::Char => t!("list.characters"),
         };
-        let section_id = format!("{}-{:?}-{}", profile.path, kind, variant);
+        let section_id = format!("{}-{kind:?}", profile.path);
         let set_sort = move |this: &mut Self, column| match kind {
-            SettingsKind::User => this.account_sort.toggle(column, false),
-            SettingsKind::Char => this.character_sort.toggle(column, false),
+            SettingsKind::User => this.account_sort.toggle(column, column == SortColumn::Time),
+            SettingsKind::Char => this
+                .character_sort
+                .toggle(column, column == SortColumn::Time),
         };
-        let can_add_all = self.source.as_ref().is_some_and(|s| s.kind() == kind);
-        let show_profile = !profile.name.eq_ignore_ascii_case("default");
-        let count = profile.entries(kind).len();
-
-        let name = self.sort_control(
-            format!("sort-name-{}", section_id).into(),
-            h_flex()
-                .gap_2()
-                .child(ui::section_title(title.to_string()))
-                .child(ui::count_label(count, cx))
-                .when(show_profile, |this| {
-                    this.child(format!("· {}", profile.name))
-                }),
-            SortColumn::Name,
-            sort,
-            set_sort,
-            cx,
-        );
-        let modified = self.sort_control(
-            format!("sort-time-{}", section_id).into(),
-            ui::section_title(t!("table.modified").to_string()),
-            SortColumn::Time,
-            sort,
-            set_sort,
-            cx,
-        );
-        // Always shown so the action is discoverable; it only becomes active
-        // once a source of this kind is selected
-        let add_all_hint = match &self.source {
-            None => Some(t!("toast.noSourceSelectedDesc")),
-            Some(_) if !can_add_all => Some(t!("toast.typeMismatchDesc")),
-            Some(_) => None,
-        };
-        let add_all = {
-            let profile = profile.clone();
-            Button::new(SharedString::from(format!("add-all-{}", section_id)))
-                .ghost()
-                .xsmall()
-                .icon(IconName::ArrowDownToLine)
-                .label(t!("table.addAll").to_string())
-                .disabled(!can_add_all)
-                .when_some(add_all_hint, |this, hint| this.tooltip(hint.to_string()))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.add_all_from_profile(&profile, kind, window, cx)
-                }))
-                .into_any_element()
-        };
-
-        table::cells(
-            ui::section_header(cx).gap_0(),
-            &ENTRY_COLUMNS,
-            [
-                table::empty(),
-                name.into_any_element(),
-                modified.into_any_element(),
-                add_all,
-            ],
-        )
+        let title = h_flex()
+            .id(match kind {
+                SettingsKind::Char => "table-title-characters",
+                SettingsKind::User => "table-title-accounts",
+            })
+            .test_support()
+            .gap_2()
+            .child(ui::section_title(title.to_string()))
+            .child(ui::count_label(count, cx));
+        let can_add_all = self.source_for(kind, cx).is_some() && !self.copying;
+        let profile_path = profile.path.clone();
+        let add_all = Button::new(SharedString::from(format!("add-all-{section_id}")))
+            .ghost()
+            .xsmall()
+            .icon(IconName::ArrowDownToLine)
+            .label(t!("table.addAll").to_string())
+            .disabled(!can_add_all)
+            .when(!can_add_all, |this| {
+                this.tooltip(t!("toast.noSourceSelectedDesc").to_string())
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                let data = this.store.read(cx).data();
+                if let Some(profile) = data.as_ref().and_then(|data| {
+                    data.servers
+                        .iter()
+                        .flat_map(|server| &server.profiles)
+                        .find(|profile| profile.path == profile_path)
+                }) {
+                    this.add_all_from_profile(profile, kind, window, cx);
+                }
+            }));
+        let mut cells = vec![table::empty()];
+        cells.extend(layout.fields.iter().map(|column| {
+            self.sort_control(
+                format!("sort-{}-{section_id}", column_id(*column)).into(),
+                ui::section_title(column_label(*column, kind)),
+                *column,
+                sort,
+                set_sort,
+                cx,
+            )
+            .into_any_element()
+        }));
+        cells.push(table::empty());
+        v_flex()
+            .flex_none()
+            .child(
+                ui::section_header(cx)
+                    .gap_2()
+                    .child(title)
+                    .when(kind == SettingsKind::Char, |this| {
+                        this.child(self.character_columns_menu(cx))
+                    })
+                    .child(div().flex_1())
+                    .child(add_all),
+            )
+            .child(
+                div().w_full().overflow_hidden().child(table::cells(
+                    ui::section_header(cx)
+                        .w_full()
+                        .min_w(layout.min_width)
+                        .relative()
+                        .left(horizontal_offset)
+                        .h(px(28.))
+                        .pr(px(32.))
+                        .gap_0(),
+                    &layout.columns,
+                    cells,
+                )),
+            )
     }
 
     fn render_entry_row(
@@ -450,12 +591,13 @@ impl MainView {
         entry: &SettingsEntry,
         data: &Rc<AppData>,
         labels: &RowLabels,
+        layout: &EntryTableLayout,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let is_source = matches!(&self.source, Some(Source::Entry(e)) if e.path == entry.path);
-        let is_target = self.targets.iter().any(|t| t.path == entry.path);
-        let can_target = self.source.as_ref().is_some_and(|s| s.kind() == entry.kind);
+        let is_source = labels.source_path.as_deref() == Some(entry.path.as_str());
+        let is_target = self.targets.contains_path(&entry.path);
+        let can_target = labels.source_path.is_some() && !is_source && !self.copying;
         let marker = if is_source {
             Some(ui::source_color())
         } else if is_target {
@@ -471,9 +613,9 @@ impl MainView {
             .child(
                 Button::new(SharedString::from(format!("{}:source", row_id)))
                     .ghost()
-                    .small()
+                    .xsmall()
                     .icon(IconName::ArrowUpFromLine)
-                    .disabled(is_source)
+                    .disabled(is_source || self.copying)
                     .tooltip(labels.source.clone())
                     .on_click(cx.listener({
                         let entry = entry.clone();
@@ -483,7 +625,7 @@ impl MainView {
             .child(
                 Button::new(SharedString::from(format!("{}:target", row_id)))
                     .ghost()
-                    .small()
+                    .xsmall()
                     .icon(IconName::ArrowDownToLine)
                     .disabled(!can_target)
                     .tooltip(labels.target.clone())
@@ -496,6 +638,21 @@ impl MainView {
 
         let dragged = Source::Entry(entry.clone());
         let drag_portrait = portrait.clone();
+        let mut cells = vec![ui::entry_avatar(entry.kind, portrait, px(20.), cx)];
+        cells.extend(layout.fields.iter().map(|column| {
+            if *column == SortColumn::Name {
+                self.render_entry_name(entry, window, cx)
+            } else {
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(entry_column_text(entry, *column))
+                    .into_any_element()
+            }
+        }));
+        cells.push(actions.into_any_element());
         table::cells(
             ui::list_row(ElementId::Name(row_id), marker, cx)
                 .h(ui::ROW_HEIGHT)
@@ -504,16 +661,8 @@ impl MainView {
                     let portrait = drag_portrait.clone();
                     cx.new(|_| DragPreview::new(&dragged.0, grab, portrait))
                 }),
-            &ENTRY_COLUMNS,
-            [
-                ui::entry_avatar(entry.kind, portrait, px(24.), cx),
-                self.render_entry_name(entry, window, cx),
-                div()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(ui::relative_time(entry.modified_time))
-                    .into_any_element(),
-                actions.into_any_element(),
-            ],
+            &layout.columns,
+            cells,
         )
         .into_any_element()
     }
@@ -524,18 +673,11 @@ impl MainView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if let Some(character) = &entry.character {
-            return h_flex()
-                .gap_2()
+        if entry.kind == SettingsKind::Char {
+            return div()
                 .min_w_0()
-                .child(div().truncate().child(character.name.clone()))
-                .children(character.corporation.clone().map(|corp| {
-                    div()
-                        .truncate()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(corp)
-                }))
+                .truncate()
+                .child(entry.display_name.clone())
                 .into_any_element();
         }
 
@@ -550,11 +692,16 @@ impl MainView {
                         cx.notify();
                     }
                 }))
-                .child(div().w(px(220.)).child(Input::new(&edit.input).small()))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(Input::new(&edit.input).small()),
+                )
                 .child(
                     Button::new("alias-save")
                         .ghost()
-                        .small()
+                        .xsmall()
                         .icon(IconName::Check)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             let alias = input.read(cx).value().to_string();
@@ -564,7 +711,7 @@ impl MainView {
                 .child(
                     Button::new("alias-cancel")
                         .ghost()
-                        .small()
+                        .xsmall()
                         .icon(IconName::X)
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.alias_edit = None;
@@ -581,17 +728,8 @@ impl MainView {
             .child(
                 div()
                     .truncate()
-                    .child(entry.alias.clone().unwrap_or_else(|| entry.id.clone())),
+                    .child(entry.alias.clone().unwrap_or_else(|| "\u{2014}".into())),
             )
-            .when(entry.alias.is_some(), |this| {
-                this.child(
-                    div()
-                        .flex_none()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(entry.id.clone()),
-                )
-            })
             .child(
                 div()
                     .opacity(0.)
@@ -623,7 +761,7 @@ impl MainView {
 
         Button::new(SharedString::from(format!("{}:menu", row_id)))
             .ghost()
-            .small()
+            .xsmall()
             .icon(IconName::Ellipsis)
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, window, cx| {
                 let menu = menu
@@ -704,8 +842,8 @@ impl MainView {
         let mut backups = data.backups.clone();
         backups.sort_by(|a, b| {
             sort.apply(match sort.column {
-                SortColumn::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
                 SortColumn::Time => a.timestamp.cmp(&b.timestamp),
+                _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
             })
         });
         backups
@@ -960,5 +1098,90 @@ impl MainView {
                 ),
             ))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::profiles::tests::sample_data;
+    use super::super::{MainView, Source};
+    use crate::store::Store;
+    use eve_wrench_core::Server;
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{AppContext, TestAppContext, WindowOptions, point, px};
+    use std::rc::Rc;
+
+    #[gpui_kit::test]
+    fn profiles_show_separately_and_switch_without_stale_cached_rows(cx: &mut TestAppContext) {
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            Store::install_for_test(sample_data(), cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| MainView::new(window, cx))
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            view.update(cx, |view, cx| {
+                let data = view.store.read(cx).data().unwrap();
+                let server = &data.servers[0];
+                let default = view.ordered_browser_rows(server, &data);
+                assert_eq!(default.sections.len(), 2);
+                assert!(
+                    default
+                        .sections
+                        .iter()
+                        .all(|(profile, _, entries)| *profile == 1 && *entries == [0, 1])
+                );
+                assert!(Rc::ptr_eq(
+                    &default,
+                    &view.ordered_browser_rows(server, &data)
+                ));
+
+                let source = Source::Entry(server.profiles[1].characters[0].clone());
+                view.set_source(source.clone(), cx);
+                view.targets.push(server.profiles[1].characters[1].clone());
+                view.character_scroll
+                    .handle
+                    .set_offset(point(px(0.), px(-100.)));
+                view.select_profile(server.info.id, server.profiles[0].path.clone(), cx);
+                assert_eq!(view.character_scroll.handle.offset().y, px(0.));
+                assert!(view.source == Some(source));
+                assert_eq!(view.targets.len(), 1);
+                let alternate = view.ordered_browser_rows(server, &data);
+                assert!(!Rc::ptr_eq(&default, &alternate));
+                assert!(
+                    alternate
+                        .sections
+                        .iter()
+                        .all(|(profile, _, _)| *profile == 0)
+                );
+                assert_eq!(
+                    view.selected_profile(&data.servers[1]).unwrap().name,
+                    "Default"
+                );
+                view.select_profile(
+                    Server::Singularity,
+                    data.servers[1].profiles[0].path.clone(),
+                    cx,
+                );
+                assert_eq!(view.selected_profile(server).unwrap().name, "Alternate");
+                view.select_profile(server.info.id, "/missing/profile".into(), cx);
+                assert_eq!(view.selected_profile(server).unwrap().name, "Alternate");
+
+                let mut refreshed = (*data).clone();
+                refreshed.servers[0].profiles.remove(0);
+                let refreshed = Rc::new(refreshed);
+                assert_eq!(
+                    view.selected_profile(&refreshed.servers[0]).unwrap().name,
+                    "Default"
+                );
+                let rows = view.ordered_browser_rows(&refreshed.servers[0], &refreshed);
+                assert!(rows.sections.iter().all(|(profile, _, _)| *profile == 0));
+            });
+            window.render_frame(cx);
+        })
+        .unwrap();
     }
 }

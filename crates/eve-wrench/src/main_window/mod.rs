@@ -1,17 +1,24 @@
 mod actions;
 mod browser;
 mod copy_panel;
+mod copy_plan;
+mod default_sources;
 mod dialogs;
+mod entry_columns;
+mod ordering;
+mod profiles;
+mod scroll;
+mod search;
 mod settings_panel;
+mod targets;
 mod title_bar;
 
 use std::collections::{HashMap, HashSet};
 
-use eve_wrench_core::copy::COPY_GROUPS;
 use eve_wrench_core::{BackupEntry, Server, SettingsEntry, SettingsKind};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::Button;
-use gpui_kit::component::input::InputState;
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, TitleBar, h_flex, v_flex};
 use gpui_kit::*;
@@ -21,11 +28,12 @@ use rust_i18n::t;
 
 use crate::store::{Store, StoreEvent};
 use crate::ui;
+use search::SearchQuery;
 
 pub fn open(cx: &mut App) {
     let options = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(1000.), px(700.)), cx)),
-        window_min_size: Some(size(px(1000.), px(600.))),
+        window_bounds: Some(WindowBounds::centered(size(px(1440.), px(800.)), cx)),
+        window_min_size: Some(size(px(1200.), px(600.))),
         app_id: Some("eve-wrench".into()),
         window_decorations: cfg!(target_os = "linux").then_some(WindowDecorations::Client),
         ..TitleBar::window_options()
@@ -124,11 +132,15 @@ impl Render for DragPreview {
 
 #[derive(Clone, Copy, PartialEq)]
 enum SortColumn {
+    Id,
     Name,
     Time,
+    Corporation,
+    Alliance,
+    CreationDate,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct Sort {
     column: SortColumn,
     ascending: bool,
@@ -170,9 +182,13 @@ struct AliasEdit {
 pub struct MainView {
     store: Entity<Store>,
     tab: Option<Tab>,
+    selected_profiles: HashMap<Server, String>,
     source: Option<Source>,
-    targets: Vec<SettingsEntry>,
-    groups: HashMap<&'static str, bool>,
+    using_default_sources: bool,
+    targets: targets::Targets,
+    target_scroll: UniformListScrollHandle,
+    #[cfg(test)]
+    target_rows_built: usize,
     copying: bool,
     account_sort: Sort,
     character_sort: Sort,
@@ -180,7 +196,11 @@ pub struct MainView {
     selected_backups: HashSet<String>,
     alias_edit: Option<AliasEdit>,
     announce_refresh: bool,
-    browser_scroll: ScrollHandle,
+    account_scroll: scroll::TableScroll,
+    character_scroll: scroll::TableScroll,
+    browser_rows: Option<std::rc::Rc<browser::BrowserRows>>,
+    entry_search: Entity<InputState>,
+    entry_query: SearchQuery,
     settings_panel: Entity<settings_panel::SettingsPanel>,
     _dialog_subscription: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
@@ -189,10 +209,23 @@ pub struct MainView {
 impl MainView {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = Store::global(cx);
+        let using_default_sources = store.read(cx).config().default_sources.has_any();
         let this = cx.weak_entity();
         let settings_panel = cx.new(|cx| settings_panel::SettingsPanel::new(this, cx));
+        let entry_search = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("list.searchEntries").to_string())
+        });
         let subscriptions = vec![
+            cx.subscribe_in(&entry_search, window, |this, input, event, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.entry_query = SearchQuery::new(&input.read(cx).value());
+                    this.alias_edit = None;
+                    this.reset_browser_scroll();
+                    cx.notify();
+                }
+            }),
             cx.observe(&store, |_, _, cx| cx.notify()),
+            cx.observe_global::<gpui_kit::component::Theme>(|_, cx| cx.notify()),
             cx.subscribe_in(&store, window, |this, _, event, window, cx| match event {
                 StoreEvent::DataChanged => this.on_data_changed(window, cx),
                 StoreEvent::LoadFailed(error) => {
@@ -202,6 +235,8 @@ impl MainView {
             }),
         ];
 
+        // Disabled for this fork: do not check or install upstream releases.
+        /*
         cx.spawn_in(window, async move |this, cx| {
             let update = cx.background_spawn(async { crate::updater::check() }).await;
             if let Ok(Some(info)) = update {
@@ -212,27 +247,36 @@ impl MainView {
             }
         })
         .detach();
+        */
 
-        let name_sort = Sort {
-            column: SortColumn::Name,
+        let id_sort = Sort {
+            column: SortColumn::Id,
             ascending: true,
         };
         Self {
             store,
             tab: None,
+            selected_profiles: HashMap::new(),
             source: None,
-            targets: Vec::new(),
-            groups: COPY_GROUPS.iter().map(|g| (g.id, g.default_on)).collect(),
+            using_default_sources,
+            targets: targets::Targets::default(),
+            target_scroll: UniformListScrollHandle::new(),
+            #[cfg(test)]
+            target_rows_built: 0,
             copying: false,
-            account_sort: name_sort,
-            character_sort: name_sort,
+            account_sort: id_sort,
+            character_sort: id_sort,
             backup_sort: Sort {
                 column: SortColumn::Time,
                 ascending: false,
             },
             selected_backups: HashSet::new(),
             alias_edit: None,
-            browser_scroll: ScrollHandle::new(),
+            account_scroll: scroll::TableScroll::default(),
+            character_scroll: scroll::TableScroll::default(),
+            browser_rows: None,
+            entry_search,
+            entry_query: SearchQuery::default(),
             settings_panel,
             announce_refresh: false,
             _dialog_subscription: None,
@@ -265,6 +309,11 @@ impl MainView {
         let backup_ids: HashSet<&str> = data.backups.iter().map(|b| b.id.as_str()).collect();
         self.selected_backups
             .retain(|id| backup_ids.contains(id.as_str()));
+        self.selected_profiles.retain(|server, path| {
+            data.servers.iter().any(|data| {
+                data.info.id == *server && data.profiles.iter().any(|profile| profile.path == *path)
+            })
+        });
 
         let tab_exists = match self.tab {
             Some(Tab::Server(server)) => data.servers.iter().any(|s| s.info.id == server),

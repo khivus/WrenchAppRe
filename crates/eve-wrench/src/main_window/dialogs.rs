@@ -4,18 +4,16 @@ use std::rc::Rc;
 
 use eve_wrench_core::SettingsEntry;
 use eve_wrench_core::archive::ImportAnalysis;
-use eve_wrench_core::updates::APP_VERSION;
+// use eve_wrench_core::updates::APP_VERSION;
 
-use crate::ui;
-use crate::updater::AvailableUpdate;
+// use crate::ui; // Used by the disabled update dialog.
+// use crate::updater::AvailableUpdate;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex,
-};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -138,6 +136,8 @@ impl MainView {
         });
     }
 
+    // Upstream update checks and installation are disabled for this fork.
+    /*
     pub(super) fn show_update_dialog(
         &mut self,
         update: AvailableUpdate,
@@ -175,6 +175,7 @@ impl MainView {
         })
         .detach();
     }
+    */
 }
 
 fn dialog_buttons(ok_label: String) -> DialogFooter {
@@ -386,6 +387,8 @@ impl Render for ImportDialog {
     }
 }
 
+// Retained for reference; upstream updates are disabled for this fork.
+/*
 struct UpdateDialog {
     update: AvailableUpdate,
     installing: bool,
@@ -495,3 +498,5 @@ impl Render for UpdateDialog {
             )
     }
 }
+
+*/

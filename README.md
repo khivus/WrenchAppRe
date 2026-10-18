@@ -6,13 +6,19 @@
 </p>
 
 <p align="center">
-  <img alt="CI" src="https://github.com/eve-wrench/eve-wrench-app/actions/workflows/ci.yml/badge.svg">
-  <img alt="Latest release" src="https://img.shields.io/github/v/release/eve-wrench/eve-wrench-app?include_prereleases&sort=semver">
+  <img alt="CI" src="https://github.com/khivus/eve-wrench-app/actions/workflows/ci.yml/badge.svg">
+  <img alt="Latest release" src="https://img.shields.io/github/v/release/khivus/eve-wrench-app?include_prereleases&sort=semver">
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-informational">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
 
 ---
+
+This is [khivus's fork](https://github.com/khivus/eve-wrench-app) of
+[EVE Wrench](https://github.com/eve-wrench/eve-wrench-app), based on upstream
+0.4.0. Fork releases continue with standard semantic versions, starting at
+**0.4.1**. See [CHANGELOG.md](CHANGELOG.md) for the changes. Upstream update
+checks are disabled; download new fork versions from this repository's releases.
 
 <img width="1363" height="893" alt="EVE Wrench" src="https://github.com/user-attachments/assets/c8df4ab3-96cb-4bda-bc00-a72e43b43a51" />
 
@@ -148,34 +154,81 @@ automatically.
 - **Always Show Bracket Text**: show ship labels on all brackets in space, not
   just selected targets (handy for PvP awareness; may cost performance in 200+
   pilot fights; needs a client restart)
-- **Update notifications**: the app checks GitHub at startup. Stable builds only
-  see stable releases; **preview builds** (a pre-release version, marked with a
-  _Preview_ badge in the title bar) are also told about newer previews
+- **Upstream updates disabled in this fork**: startup checks, manual checks, and
+  the upstream update dialog are commented out.
 
 ---
 
 ## Installation
 
-Grab the latest build from [**Releases**](https://github.com/eve-wrench/eve-wrench-app/releases).
+Grab the latest fork build from [**Releases**](https://github.com/khivus/eve-wrench-app/releases).
 
-| OS          | File                                    | Notes                                                                                                            |
-| ----------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| **macOS**   | `.dmg`                                  | Open and drag to Applications (Apple Silicon & Intel builds)                                                     |
-| **Windows** | `.msi` / `-setup.exe` / `-portable.exe` | Run an installer, or the portable `.exe` (no install, no runtime dependencies) |
-| **Linux**   | `.AppImage` / `.deb`                    | `chmod +x eve-wrench_*.AppImage && ./eve-wrench_*.AppImage`                                                      |
+Version **0.4.1** provides **EVE-Wrench_0.4.1_x64-portable.exe** for Windows x64.
+Download and run it directly; no installation is needed. The release also includes
+SHA-256 checksums. macOS and Linux source support and packaging workflows are
+retained from upstream, but this fork release does not include builds for them.
 
 ## Quick start
 
 1. **Launch**: EVE Wrench scans for installations and lists every account and character
-2. **Pick a server** with the tabs at the top
+2. **Pick a server** with the tabs at the top, then a **Profile** directly below
 3. **Set a source** with the ↑ button on any row (or the ⋯ menu)
 4. **Add targets** with the ↓ button on compatible rows
 5. **Choose what to copy** in the right panel, then hit **Copy Settings**
 6. **Back up first** from the ⋯ menu whenever you want a manual safety net
 
-> **Tip:** Sort by name or modification time from the column headers, use
+> **Tip:** Accounts and characters start in numeric ID order. Click a column header
+> to sort by ID, name, or modification time; the table titles are plain labels. Use
 > _"Add all"_ to target a whole profile, and give accounts aliases so you're not
 > staring at raw IDs.
+
+Accounts have separate **Account ID** and **Custom name** columns, which sort
+independently. The character table starts with **Name**, **Character ID**, and
+**Modified**. Its **Columns** menu adds **Corporation**, **Alliance**, and **Created**;
+each optional column is sortable, and the selection is saved immediately. Wider
+tables scroll horizontally while keeping their headers aligned. Character names,
+corporations, alliances, and creation dates use EVE's public API without login.
+
+The search box filters both accounts and characters by names, custom aliases, IDs,
+corporations, alliances, creation dates, profiles,
+servers, settings file paths, entry types, and displayed modification times.
+Search is case-insensitive; every word must match somewhere in the row's details.
+Clear the search to show all entries again. While searching, **Add all** adds only
+matching entries from that profile. Use the scrollbar or mouse wheel to browse
+long lists.
+
+Only the selected profile's accounts and characters appear, in two side-by-side
+tables with characters on the left, accounts on the right, independent scrollbars,
+and fixed sorting headers. Each
+server remembers its selected profile while the app is open. Below the default
+character/account selectors, **Add targets: This profile / This server / All servers** adds every
+compatible account and character in that scope, including entries hidden by
+search. These buttons preserve existing targets and skip source files and
+duplicates. With a saved character and account source, both types are selected;
+with a single source, only its type is selected. Selection does not copy files;
+use **Copy Settings** and confirm to apply the changes.
+
+Long browser and selected-target lists render only visible rows, keeping large
+target selections inexpensive to repaint. Mouse-wheel scrolling in the browser
+uses smaller, animated steps. Default-source menus also use numeric ID order.
+
+The top-bar cogwheel contains the **Dark theme** switch; changes apply immediately
+and are saved for the next launch. **Extra / Always Show Bracket Text** is also
+there, with a separate switch for each detected server.
+
+**What to copy** preferences are saved on every checkbox click and restored at
+startup. Account and character choices are retained when switching sources or
+profiles; options without a saved preference keep their original defaults.
+
+Above search, **Default character + account** lets you choose and save both source
+files. Choose the account explicitly: EVE's settings files do not identify which
+account owns a character. The saved choices are restored at startup. You can add
+account and character targets together; each receives settings from its matching
+source, using the normal confirmation, copy options, and automatic backups.
+Selecting another source temporarily overrides the defaults; **Use default**
+restores the saved pair. Choose **None** in either selector to remove that saved
+choice. If a saved file is unavailable, the app shows that status and disables
+targets of that type until a valid source is chosen.
 
 ---
 
@@ -215,7 +268,7 @@ settings_Default/
 `clang libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev libvulkan1`.
 
 ```bash
-git clone https://github.com/eve-wrench/eve-wrench-app.git
+git clone https://github.com/khivus/eve-wrench-app.git
 cd eve-wrench-app
 cargo run -p eve-wrench
 ```
@@ -241,14 +294,9 @@ Translations live in `crates/eve-wrench/locales` (English and Simplified Chinese
 
 CI runs `cargo fmt`, `clippy -D warnings`, and `test` on every push and PR.
 
-**Auto-updates.** Release builds install updates in place when the repository
-has an updater signing key. Generate one with
-`cargo packager signer generate --path eve-wrench-updater.key`, then add the
-public key as the `UPDATER_PUBKEY` Actions variable and the private key and its
-password as the `UPDATER_PRIVATE_KEY` and `UPDATER_PRIVATE_KEY_PASSWORD`
-secrets. The release workflow then signs every package and publishes
-`latest.json`. Without the key, the app still announces new releases and links
-to the download page.
+**Auto-updates.** Disabled in this fork. The original updater code and release
+packaging configuration are retained for reference; upstream checks and the
+installation UI are commented out.
 
 **Tech stack:** Rust, GPUI, GPUI Kit,
 [blue-marshal](https://github.com/TrueBrain/blue-marshal-rs), EVE ESI, Lucide.

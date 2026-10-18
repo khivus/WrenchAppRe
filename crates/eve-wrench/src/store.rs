@@ -34,6 +34,28 @@ impl Global for GlobalStore {}
 impl EventEmitter<StoreEvent> for Store {}
 
 impl Store {
+    #[cfg(test)]
+    pub(crate) fn install_for_test(data: AppData, cx: &mut App) {
+        static NEXT_TEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let test_id = NEXT_TEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let store = cx.new(|_| Store {
+            locations: Locations::new(
+                std::env::temp_dir().join(format!(
+                    "eve-wrench-ui-tests-{}-{test_id}",
+                    std::process::id()
+                )),
+                None,
+            ),
+            config: Config::default(),
+            data: Some(Rc::new(data)),
+            portraits: HashMap::new(),
+            loading: false,
+            _load: None,
+            editor_windows: HashMap::new(),
+        });
+        cx.set_global(GlobalStore(store));
+    }
+
     pub fn init(cx: &mut App) -> Entity<Store> {
         let data_dir = Locations::default_data_dir();
         let config = Config::load(&Locations::new(data_dir.clone(), None).config_file());
@@ -161,8 +183,10 @@ impl Store {
         edit: impl FnOnce(&mut Config),
     ) -> Result<(), String> {
         let previous_path = self.config.custom_eve_path.clone();
-        edit(&mut self.config);
-        let saved = self.config.save(&self.locations.config_file());
+        let mut config = self.config.clone();
+        edit(&mut config);
+        config.save(&self.locations.config_file())?;
+        self.config = config;
 
         if self.config.custom_eve_path != previous_path {
             self.locations = Locations::new(
@@ -172,7 +196,7 @@ impl Store {
             self.reload(cx);
         }
         cx.notify();
-        saved
+        Ok(())
     }
 
     pub fn editor_window(&self, path: &str) -> Option<AnyWindowHandle> {

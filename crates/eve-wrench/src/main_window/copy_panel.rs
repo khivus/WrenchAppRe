@@ -1,13 +1,16 @@
 use eve_wrench_core::SettingsKind;
 use eve_wrench_core::copy::COPY_GROUPS;
 use gpui_kit::assets::IconName;
+use gpui_kit::base::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use rust_i18n::t;
+use std::ops::Range;
 
+use super::copy_plan::can_copy;
 use super::{DraggedSettings, MainView, Source};
 use crate::table::{self, Column};
 use crate::ui;
@@ -22,8 +25,30 @@ const PANEL_COLUMNS: [Column; 4] = [
 ];
 
 impl MainView {
+    fn set_copy_group(
+        &mut self,
+        id: &'static str,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.copying {
+            return;
+        }
+        if let Err(error) = self.store.update(cx, |store, cx| {
+            store.update_config(cx, |config| {
+                config.copy_groups.insert(id.to_string(), enabled);
+            })
+        }) {
+            ui::notify_error(t!("copyPanel.saveFailed"), error, window, cx);
+        }
+        cx.notify();
+    }
+
     pub(super) fn render_copy_panel(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let can_copy = self.source.is_some() && !self.targets.is_empty() && !self.copying;
+        let sources = self.active_sources(cx);
+        let can_copy = can_copy(&sources, &self.targets) && !self.copying;
+        let source_kinds: Vec<_> = sources.iter().map(Source::kind).collect();
 
         v_flex()
             .w(px(300.))
@@ -33,11 +58,9 @@ impl MainView {
             .text_sm()
             .child(self.render_source(cx))
             .child(self.render_targets(cx))
-            .children(
-                self.source
-                    .as_ref()
-                    .map(|source| self.render_group_options(source.kind(), cx)),
-            )
+            .when(!source_kinds.is_empty(), |this| {
+                this.child(self.render_group_options(&source_kinds, cx))
+            })
             .child(
                 div()
                     .flex_none()
@@ -85,6 +108,7 @@ impl MainView {
                     Button::new(id)
                         .ghost()
                         .xsmall()
+                        .disabled(self.copying)
                         .label(t!("common.clear").to_string())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             on_clear(this);
@@ -111,17 +135,22 @@ impl MainView {
     }
 
     fn render_source(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let sources = self.active_sources(cx);
         let header = self.panel_header(
             "clear-source",
             t!("copyPanel.source").to_string(),
             None,
-            self.source.is_some(),
-            |this| this.source = None,
+            !sources.is_empty() || self.using_default_sources,
+            |this| {
+                this.source = None;
+                this.using_default_sources = false;
+            },
             cx,
         );
 
-        let body = match &self.source {
-            Some(source) => {
+        let rows: Vec<AnyElement> = sources
+            .iter()
+            .map(|source| {
                 let entry = match source {
                     Source::Entry(e) => Some(e),
                     Source::Backup(_) => None,
@@ -130,16 +159,25 @@ impl MainView {
                 let name = v_flex()
                     .min_w_0()
                     .child(div().truncate().child(source.display_name().to_string()))
-                    .when(entry.is_none(), |this| {
-                        this.child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(t!("titleBar.backups").to_string()),
-                        )
-                    });
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(match source {
+                                Source::Backup(_) => t!("titleBar.backups").to_string(),
+                                Source::Entry(entry) => match entry.kind {
+                                    SettingsKind::Char => t!("defaultSource.character").to_string(),
+                                    SettingsKind::User => t!("defaultSource.account").to_string(),
+                                },
+                            }),
+                    );
                 table::cells(
-                    ui::list_row("source-row", Some(ui::source_color()), cx).h(ui::ROW_HEIGHT),
+                    ui::list_row(
+                        SharedString::from(format!("source-row-{}", source.path())),
+                        Some(ui::source_color()),
+                        cx,
+                    )
+                    .h(ui::ROW_HEIGHT),
                     &PANEL_COLUMNS,
                     [
                         ui::entry_avatar(source.kind(), portrait, px(24.), cx),
@@ -151,9 +189,12 @@ impl MainView {
                     ],
                 )
                 .into_any_element()
-            }
-            None => Self::empty_hint(t!("copyPanel.noSourceSelected").to_string(), cx)
-                .into_any_element(),
+            })
+            .collect();
+        let body = if rows.is_empty() {
+            Self::empty_hint(t!("copyPanel.noSourceSelected").to_string(), cx).into_any_element()
+        } else {
+            v_flex().children(rows).into_any_element()
         };
 
         let tint = ui::source_color().opacity(0.12);
@@ -180,51 +221,7 @@ impl MainView {
             )
             .border_t_1();
 
-        let rows: Vec<AnyElement> = self
-            .targets
-            .iter()
-            .map(|target| {
-                let path = target.path.clone();
-                let portrait = self.store.read(cx).portrait(&target.id);
-                let remove = div()
-                    .opacity(0.)
-                    .group_hover("target-row", |s| s.opacity(1.))
-                    .child(
-                        Button::new(SharedString::from(format!("remove-{}", target.path)))
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::X)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.targets.retain(|t| t.path != path);
-                                cx.notify();
-                            })),
-                    );
-                table::cells(
-                    ui::list_row(
-                        SharedString::from(format!("target-{}", target.path)),
-                        Some(ui::target_color()),
-                        cx,
-                    )
-                    .h(ui::ROW_HEIGHT)
-                    .group("target-row"),
-                    &PANEL_COLUMNS,
-                    [
-                        ui::entry_avatar(target.kind, portrait, px(24.), cx),
-                        div()
-                            .truncate()
-                            .child(target.display_name.clone())
-                            .into_any_element(),
-                        ui::server_badge(target.server).into_any_element(),
-                        remove.into_any_element(),
-                    ],
-                )
-                .into_any_element()
-            })
-            .collect();
-
-        // Only accounts and characters are targets, and only of the source's
-        // kind; with no source yet the drop goes through so it can explain why
-        let source_kind = self.source.as_ref().map(Source::kind);
+        let source_kinds: Vec<_> = self.active_sources(cx).iter().map(Source::kind).collect();
         let tint = ui::target_color().opacity(0.12);
         v_flex()
             .flex_1()
@@ -234,7 +231,9 @@ impl MainView {
                 value
                     .downcast_ref::<DraggedSettings>()
                     .is_some_and(|dragged| match &dragged.0 {
-                        Source::Entry(entry) => source_kind.is_none_or(|kind| kind == entry.kind),
+                        Source::Entry(entry) => {
+                            source_kinds.is_empty() || source_kinds.contains(&entry.kind)
+                        }
                         Source::Backup(_) => false,
                     })
             })
@@ -247,32 +246,113 @@ impl MainView {
             .child(
                 div()
                     .id("targets-scroll")
+                    .test_support()
+                    .relative()
                     .flex_1()
-                    .overflow_y_scroll()
-                    .when(!has_targets, |this| {
-                        this.child(Self::empty_hint(
-                            t!("copyPanel.noTargetsSelected").to_string(),
-                            cx,
-                        ))
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(if has_targets {
+                        uniform_list(
+                            "selected-targets",
+                            self.targets.len(),
+                            cx.processor(|this, range: Range<usize>, _, cx| {
+                                this.render_target_rows(range, cx)
+                            }),
+                        )
+                        .size_full()
+                        .pr_4()
+                        .track_scroll(&self.target_scroll)
+                        .into_any_element()
+                    } else {
+                        Self::empty_hint(t!("copyPanel.noTargetsSelected").to_string(), cx)
+                            .into_any_element()
                     })
-                    .children(rows),
+                    .when(has_targets, |this| {
+                        this.child(
+                            Scrollbar::vertical(&self.target_scroll)
+                                .id("targets-scrollbar")
+                                .mode(ScrollbarMode::Always),
+                        )
+                    }),
             )
+    }
+
+    fn render_target_rows(
+        &mut self,
+        range: Range<usize>,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        #[cfg(test)]
+        {
+            self.target_rows_built += range.len();
+        }
+        self.targets
+            .get(range)
+            .unwrap_or_default()
+            .iter()
+            .map(|target| {
+                let path = target.path.clone();
+                let portrait = self.store.read(cx).portrait(&target.id);
+                let remove = div()
+                    .opacity(0.)
+                    .group_hover("target-row", |s| s.opacity(1.))
+                    .child(
+                        Button::new(SharedString::from(format!("remove-{}", target.path)))
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::X)
+                            .disabled(self.copying)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.targets.retain(|t| t.path != path);
+                                cx.notify();
+                            })),
+                    );
+                table::cells(
+                    ui::list_row(
+                        SharedString::from(format!("target-{}", target.path)),
+                        Some(ui::target_color()),
+                        cx,
+                    )
+                    .h(ui::ROW_HEIGHT)
+                    .w_full()
+                    .group("target-row")
+                    .test_support(),
+                    &PANEL_COLUMNS,
+                    [
+                        ui::entry_avatar(target.kind, portrait, px(24.), cx),
+                        div()
+                            .truncate()
+                            .child(target.display_name.clone())
+                            .into_any_element(),
+                        h_flex()
+                            .id(SharedString::from(format!("target-server-{}", target.path)))
+                            .test_support()
+                            .flex_none()
+                            .child(ui::server_badge(target.server))
+                            .into_any_element(),
+                        remove.into_any_element(),
+                    ],
+                )
+                .into_any_element()
+            })
+            .collect()
     }
 
     fn render_group_options(
         &self,
-        kind: SettingsKind,
+        kinds: &[SettingsKind],
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let hover = cx.theme().muted.opacity(0.6);
         let groups: Vec<AnyElement> = COPY_GROUPS
             .iter()
-            .filter(|g| g.applies_to(kind))
+            .filter(|g| kinds.iter().any(|kind| g.applies_to(*kind)))
             .map(|group| {
                 let id = group.id;
-                let checked = self.groups.get(id).copied().unwrap_or(group.default_on);
+                let checked = self.store.read(cx).config().copy_group_enabled(group);
                 h_flex()
                     .id(SharedString::from(format!("group-row-{}", id)))
+                    .test_support()
                     .px_4()
                     .py_1p5()
                     .hover(move |s| s.bg(hover))
@@ -281,9 +361,9 @@ impl MainView {
                             .small()
                             .label(t!(format!("copyGroups.{}", id)).to_string())
                             .checked(checked)
-                            .on_change(cx.listener(move |this, checked: &bool, _, cx| {
-                                this.groups.insert(id, *checked);
-                                cx.notify();
+                            .disabled(self.copying)
+                            .on_change(cx.listener(move |this, checked: &bool, window, cx| {
+                                this.set_copy_group(id, *checked, window, cx);
                             })),
                     )
                     .into_any_element()
@@ -320,5 +400,187 @@ impl MainView {
                     .text_color(cx.theme().muted_foreground)
                     .child(t!("copyPanel.selectiveHint").to_string()),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{MainView, Source, profiles::tests::sample_data};
+    use crate::store::Store;
+    use eve_wrench_core::config::Config;
+    use gpui_kit::test::TestWindowExt;
+    use gpui_kit::{
+        AppContext, Bounds, ScrollDelta, ScrollStrategy, SharedString, TestAppContext,
+        WindowBounds, WindowOptions, point, px, size,
+    };
+
+    #[gpui_kit::test]
+    fn four_hundred_targets_only_build_visible_rows_and_toolbar_is_below_defaults(
+        cx: &mut TestAppContext,
+    ) {
+        let mut data = sample_data();
+        let profile = &mut data.servers[0].profiles[1];
+        let template = profile.characters[0].clone();
+        profile.characters = (0..=400)
+            .map(|id| {
+                let mut entry = template.clone();
+                entry.id = id.to_string();
+                entry.path = format!("{}/Char_{id}.dat", profile.path);
+                entry.display_name = if id == 1 {
+                    "A".to_string()
+                } else {
+                    format!("Pilot with a longer name {id}")
+                };
+                entry
+            })
+            .collect();
+        let source = Source::Entry(profile.characters[0].clone());
+        let first_path = profile.characters[1].path.clone();
+        let second_path = profile.characters[2].path.clone();
+        let last_path = profile.characters[400].path.clone();
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            Store::install_for_test(data, cx);
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: point(px(0.), px(0.)),
+                        size: size(px(1440.), px(800.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| MainView::new(window, cx)),
+            )
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.set_source(source, cx));
+            window.render_frame(cx);
+            let profile = window.find("profile-controls").bounds();
+            let defaults = window.find("default-sources-controls").bounds();
+            let pickers = window.find("default-source-pickers").bounds();
+            let targets = window.find("add-target-controls").bounds();
+            assert!(profile.bottom() <= defaults.top());
+            assert!(pickers.bottom() <= targets.top());
+            assert!(targets.bottom() <= defaults.bottom());
+            window.click("targets-profile", cx);
+            assert_eq!(view.read(cx).targets.len(), 400);
+            let mut max_rows = 0;
+            for _ in 0..12 {
+                view.update(cx, |view, cx| { view.target_rows_built = 0; cx.notify(); });
+                window.render_frame(cx);
+                max_rows = max_rows.max(view.read(cx).target_rows_built);
+                assert!(view.read(cx).target_rows_built < 30);
+                assert_eq!(view.read(cx).targets.len(), 400);
+            }
+            assert!(max_rows > 0);
+            assert!(window.find(SharedString::from(format!("target-{first_path}"))).visible());
+            let viewport = window.find("targets-scroll").bounds();
+            let first_row = window.find(SharedString::from(format!("target-{first_path}"))).bounds();
+            let second_row = window.find(SharedString::from(format!("target-{second_path}"))).bounds();
+            assert_eq!(first_row.left(), viewport.left());
+            assert_eq!(first_row.right(), viewport.right() - px(16.));
+            assert_eq!(second_row.size.width, first_row.size.width);
+            let first_badge = window.find(SharedString::from(format!("target-server-{first_path}"))).bounds();
+            let second_badge = window.find(SharedString::from(format!("target-server-{second_path}"))).bounds();
+            assert_eq!(first_badge.right(), second_badge.right());
+            assert_eq!(first_badge.right(), first_row.right() - px(44.));
+            assert!(window.try_find(SharedString::from(format!("target-{last_path}"))).is_none());
+            window.scroll("targets-scroll", ScrollDelta::Lines(point(0., -3.)), cx);
+            view.update(cx, |view, cx| {
+                view.target_rows_built = 0;
+                view.target_scroll.scroll_to_item(399, ScrollStrategy::Bottom);
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(view.read(cx).target_rows_built < 30);
+            let last_row = SharedString::from(format!("target-{last_path}"));
+            assert!(window.find(last_row.clone()).visible());
+            window.hover(last_row, cx);
+            window.click(SharedString::from(format!("remove-{last_path}")), cx);
+            assert_eq!(view.read(cx).targets.len(), 399);
+            assert!(!view.read(cx).targets.contains_path(&last_path));
+            assert!(view.read(cx).targets.contains_path(&first_path));
+            window.click("clear-targets", cx);
+            assert!(view.read(cx).targets.is_empty());
+            assert!(!view.read(cx).targets.contains_path(&first_path));
+            eprintln!("400 selected targets: at most {max_rows} target rows built per repaint in the test viewport");
+        }).unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn copy_options_save_on_click_across_source_kinds_and_new_views(cx: &mut TestAppContext) {
+        let data = sample_data();
+        let character = Source::Entry(data.servers[0].profiles[1].characters[0].clone());
+        let account = Source::Entry(data.servers[0].profiles[1].accounts[0].clone());
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            Store::install_for_test(data, cx);
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: point(px(0.), px(0.)),
+                        size: size(px(1440.), px(900.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| MainView::new(window, cx)),
+            )
+            .unwrap()
+        });
+        let config_file = cx
+            .update_window(handle, |_, window, cx| {
+                view.update(cx, |view, cx| view.set_source(character.clone(), cx));
+                window.render_frame(cx);
+                let row = window.find("group-row-windows").bounds();
+                window.click_at(
+                    "group-row-windows",
+                    point(px(24.), row.size.height / 2.),
+                    cx,
+                );
+                let config_file = Store::global(cx).read(cx).locations().config_file();
+                assert_eq!(
+                    Config::load(&config_file).copy_groups.get("windows"),
+                    Some(&false)
+                );
+                view.update(cx, |view, cx| view.set_source(account, cx));
+                window.render_frame(cx);
+                let row = window.find("group-row-overview").bounds();
+                window.click_at(
+                    "group-row-overview",
+                    point(px(24.), row.size.height / 2.),
+                    cx,
+                );
+                let saved = Config::load(&config_file);
+                assert_eq!(saved.copy_groups.get("windows"), Some(&false));
+                assert_eq!(saved.copy_groups.get("overview"), Some(&false));
+                config_file
+            })
+            .unwrap();
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| MainView::new(window, cx))
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.set_source(character, cx));
+            window.render_frame(cx);
+            let row = window.find("group-row-windows").bounds();
+            window.click_at(
+                "group-row-windows",
+                point(px(24.), row.size.height / 2.),
+                cx,
+            );
+            let saved = Config::load(&config_file);
+            assert_eq!(saved.copy_groups.get("windows"), Some(&true));
+            assert_eq!(saved.copy_groups.get("overview"), Some(&false));
+            assert!(view.read(cx).targets.is_empty());
+            std::fs::remove_file(&config_file).unwrap();
+            std::fs::remove_dir(config_file.parent().unwrap()).unwrap();
+        })
+        .unwrap();
     }
 }

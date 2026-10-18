@@ -6,7 +6,7 @@ mod main_window;
 mod store;
 mod table;
 mod ui;
-mod updater;
+// mod updater; // Disabled for this fork; upstream releases must not replace it.
 
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode};
 use gpui_kit::*;
@@ -59,10 +59,15 @@ pub fn toggle_theme(window: &mut Window, cx: &mut App) {
     } else {
         ThemeMode::Dark
     };
-    Theme::change(next, Some(window), cx);
-    // Losing the theme choice on a failed write is harmless; it still applies now
-    let _ = Store::global(cx).update(cx, |store, cx| {
-        store.update_config(cx, |config| config.theme = Some(ui::theme_preference(next)))
-    });
+    set_theme(next, window, cx);
+}
+
+pub fn set_theme(mode: ThemeMode, window: &mut Window, cx: &mut App) {
+    Theme::change(mode, Some(window), cx);
+    if let Err(error) = Store::global(cx).update(cx, |store, cx| {
+        store.update_config(cx, |config| config.theme = Some(ui::theme_preference(mode)))
+    }) {
+        ui::notify_error(rust_i18n::t!("settings.themeSaveFailed"), error, window, cx);
+    }
     cx.refresh_windows();
 }

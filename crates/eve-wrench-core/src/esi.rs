@@ -22,15 +22,24 @@ static CHAR_CACHE: LazyLock<Mutex<HashMap<i64, CharacterDetails>>> =
 
 static CORP_CACHE: LazyLock<Mutex<HashMap<i64, String>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static ALLIANCE_CACHE: LazyLock<Mutex<HashMap<i64, String>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Deserialize)]
 struct EsiCharacter {
     name: String,
     corporation_id: i64,
+    alliance_id: Option<i64>,
+    birthday: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct EsiCorporation {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct EsiAlliance {
     name: String,
 }
 
@@ -57,6 +66,18 @@ fn corporation_name(corporation_id: i64) -> Option<String> {
     Some(corp.name)
 }
 
+fn alliance_name(alliance_id: i64) -> Option<String> {
+    if let Some(name) = ALLIANCE_CACHE.lock().ok()?.get(&alliance_id) {
+        return Some(name.clone());
+    }
+    let alliance: EsiAlliance = get_json(&format!("{ESI_BASE}/alliances/{alliance_id}/")).ok()?;
+    ALLIANCE_CACHE
+        .lock()
+        .ok()?
+        .insert(alliance_id, alliance.name.clone());
+    Some(alliance.name)
+}
+
 pub fn character_details(character_id: i64) -> Result<CharacterDetails, String> {
     if let Some(cached) = CHAR_CACHE
         .lock()
@@ -70,6 +91,8 @@ pub fn character_details(character_id: i64) -> Result<CharacterDetails, String> 
     let details = CharacterDetails {
         name: character.name,
         corporation: corporation_name(character.corporation_id),
+        alliance: character.alliance_id.and_then(alliance_name),
+        created_at: character.birthday,
         portrait: portrait(character_id),
     };
 
@@ -112,4 +135,25 @@ pub fn fetch_character_details(ids: &[i64]) -> HashMap<i64, CharacterDetails> {
             .flatten()
             .collect()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EsiCharacter;
+
+    #[test]
+    fn public_character_fields_allow_missing_alliance_and_birthday() {
+        let with_alliance: EsiCharacter = serde_json::from_str(
+            r#"{"name":"Pilot","corporation_id":12,"alliance_id":34,"birthday":"2008-05-06T07:08:09Z"}"#,
+        ).unwrap();
+        assert_eq!(with_alliance.alliance_id, Some(34));
+        assert_eq!(
+            with_alliance.birthday.as_deref(),
+            Some("2008-05-06T07:08:09Z")
+        );
+        let without: EsiCharacter =
+            serde_json::from_str(r#"{"name":"Pilot","corporation_id":12}"#).unwrap();
+        assert!(without.alliance_id.is_none());
+        assert!(without.birthday.is_none());
+    }
 }

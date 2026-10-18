@@ -8,6 +8,7 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::*;
 use rust_i18n::t;
 
+use super::copy_plan::{CopyPlan, plan_copy};
 use super::dialogs::{ConfirmOptions, confirm};
 use super::{AliasEdit, MainView, Source};
 use crate::ui;
@@ -46,14 +47,19 @@ impl MainView {
 
     // Switching to a source of the other kind drops targets that no longer fit.
     pub(super) fn set_source(&mut self, source: Source, cx: &mut Context<Self>) {
+        if self.copying {
+            return;
+        }
         let kind = source.kind();
-        self.targets.retain(|t| t.kind == kind);
+        self.targets
+            .retain(|t| t.kind == kind && t.path != source.path());
+        self.using_default_sources = false;
         self.source = Some(source);
         cx.notify();
     }
 
     fn check_target(&self, entry: &SettingsEntry, window: &mut Window, cx: &mut App) -> bool {
-        let Some(source) = &self.source else {
+        let Some(source) = self.source_for(entry.kind, cx) else {
             ui::notify_error(
                 t!("toast.noSourceSelected"),
                 t!("toast.noSourceSelectedDesc"),
@@ -62,16 +68,7 @@ impl MainView {
             );
             return false;
         };
-        if entry.kind != source.kind() {
-            ui::notify_error(
-                t!("toast.typeMismatch"),
-                t!("toast.typeMismatchDesc"),
-                window,
-                cx,
-            );
-            return false;
-        }
-        if matches!(source, Source::Entry(e) if e.path == entry.path) {
+        if source.path() == entry.path {
             ui::notify_error(
                 t!("toast.invalidTarget"),
                 t!("toast.invalidTargetDesc"),
@@ -89,8 +86,9 @@ impl MainView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.check_target(&entry, window, cx)
-            && !self.targets.iter().any(|t| t.path == entry.path)
+        if !self.copying
+            && self.check_target(&entry, window, cx)
+            && !self.targets.contains_path(&entry.path)
         {
             self.targets.push(entry);
             cx.notify();
@@ -104,7 +102,10 @@ impl MainView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let source_path = match &self.source {
+        if self.copying {
+            return;
+        }
+        let source_path = match self.source_for(kind, cx) {
             None => {
                 ui::notify_error(
                     t!("toast.noSourceSelected"),
@@ -114,13 +115,14 @@ impl MainView {
                 );
                 return;
             }
-            Some(source) if source.kind() != kind => return,
-            Some(Source::Entry(e)) => Some(e.path.clone()),
-            Some(Source::Backup(_)) => None,
+            Some(source) => source.path().to_string(),
         };
         for entry in profile.entries(kind) {
-            let is_source = source_path.as_deref() == Some(entry.path.as_str());
-            if !is_source && !self.targets.iter().any(|t| t.path == entry.path) {
+            if !self.entry_matches_search(entry) {
+                continue;
+            }
+            let is_source = source_path == entry.path;
+            if !is_source && !self.targets.contains_path(&entry.path) {
                 self.targets.push(entry.clone());
             }
         }
@@ -128,12 +130,23 @@ impl MainView {
     }
 
     pub(super) fn execute_copy(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(source) = self.source.clone() else {
-            return;
-        };
-        if self.targets.is_empty() {
+        if self.copying {
             return;
         }
+        let Some(plans) = plan_copy(&self.active_sources(cx), &self.targets) else {
+            return;
+        };
+        let source_names = plans
+            .iter()
+            .map(|plan| {
+                let kind = match plan.source.kind() {
+                    SettingsKind::Char => t!("defaultSource.character"),
+                    SettingsKind::User => t!("defaultSource.account"),
+                };
+                format!("{kind}: {}", plan.source.display_name())
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
 
         let view = cx.entity().downgrade();
         confirm(
@@ -141,7 +154,7 @@ impl MainView {
                 title: t!("dialog.copySettings").into(),
                 description: t!(
                     "dialog.copySettingsDesc",
-                    source = source.display_name(),
+                    source = source_names,
                     count = self.targets.len()
                 )
                 .into(),
@@ -151,26 +164,37 @@ impl MainView {
             window,
             cx,
             move |window, cx| {
-                view.update(cx, |this, cx| this.copy_confirmed(window, cx))
-                    .ok();
+                view.update(cx, |this, cx| {
+                    this.copy_confirmed(plans.clone(), window, cx)
+                })
+                .ok();
             },
         );
     }
 
-    fn copy_confirmed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(source) = self.source.clone() else {
+    fn copy_confirmed(
+        &mut self,
+        plans: Vec<CopyPlan>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.copying {
             return;
-        };
-        let kind = source.kind();
-        let excluded: Vec<&'static str> = COPY_GROUPS
-            .iter()
-            .filter(|g| {
-                g.applies_to(kind) && !self.groups.get(g.id).copied().unwrap_or(g.default_on)
+        }
+        let config = self.store.read(cx).config().clone();
+        let jobs: Vec<_> = plans
+            .into_iter()
+            .map(|plan| {
+                let excluded: Vec<&'static str> = COPY_GROUPS
+                    .iter()
+                    .filter(|group| {
+                        group.applies_to(plan.source.kind()) && !config.copy_group_enabled(group)
+                    })
+                    .map(|group| group.id)
+                    .collect();
+                (plan, excluded)
             })
-            .map(|g| g.id)
             .collect();
-        let targets: Vec<String> = self.targets.iter().map(|t| t.path.clone()).collect();
-        let source_path = PathBuf::from(source.path());
         let backup = self.auto_backup(cx);
 
         self.copying = true;
@@ -178,7 +202,33 @@ impl MainView {
         self.run_job(
             window,
             cx,
-            move |_| copy::copy_settings_selective(&source_path, &targets, &excluded, backup),
+            move |_| {
+                let total: usize = jobs.iter().map(|(plan, _)| plan.targets.len()).sum();
+                let mut copied = 0;
+                let mut errors = Vec::new();
+                for (plan, excluded) in jobs {
+                    match copy::copy_settings_selective(
+                        Path::new(plan.source.path()),
+                        &plan.targets,
+                        &excluded,
+                        backup,
+                    ) {
+                        Ok(count) => copied += count,
+                        Err(error) => {
+                            errors.push(format!("{}: {error}", plan.source.display_name()))
+                        }
+                    }
+                }
+                if copied == total && errors.is_empty() {
+                    Ok(copied)
+                } else {
+                    Err(format!(
+                        "{} {}",
+                        t!("toast.copyIncompleteDesc", copied = copied, total = total),
+                        errors.join("; ")
+                    ))
+                }
+            },
             |this, result, window, cx| {
                 this.copying = false;
                 match result {

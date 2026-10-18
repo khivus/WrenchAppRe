@@ -40,48 +40,35 @@ impl MainView {
                 .when(is_preview_version(APP_VERSION), |this| {
                     this.child(preview_badge(cx))
                 }),
-            h_flex()
-                .gap_1()
-                .child(self.render_settings_menu())
-                .child(
-                    Button::new("toggle-theme")
-                        .ghost()
-                        .small()
-                        .icon(if cx.theme().is_dark() {
-                            IconName::Sun
-                        } else {
-                            IconName::Moon
-                        })
-                        .tooltip(t!("titleBar.toggleTheme").to_string())
-                        .on_click(|_, window, cx| crate::toggle_theme(window, cx)),
-                )
-                .child(
-                    Button::new("refresh")
-                        .ghost()
-                        .small()
-                        .icon(IconName::RefreshCw)
-                        .loading(loading)
-                        .disabled(loading)
-                        .tooltip(t!("common.refresh").to_string())
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-                ),
+            h_flex().gap_1().child(self.render_settings_menu()).child(
+                Button::new("refresh")
+                    .ghost()
+                    .small()
+                    .icon(IconName::RefreshCw)
+                    .loading(loading)
+                    .disabled(loading)
+                    .tooltip(t!("common.refresh").to_string())
+                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+            ),
         ))
     }
 
     fn render_settings_menu(&self) -> impl IntoElement + use<> {
         let panel = self.settings_panel.clone();
-        Popover::new("settings-popover")
-            .anchor(Anchor::TopRight)
-            .p_0()
-            .overflow_hidden()
-            .trigger(
-                Button::new("settings")
-                    .ghost()
-                    .small()
-                    .icon(IconName::Settings)
-                    .tooltip(t!("titleBar.settings").to_string()),
-            )
-            .content(move |_, _, _| panel.clone())
+        div().id("settings-trigger").test_support().child(
+            Popover::new("settings-popover")
+                .anchor(Anchor::TopRight)
+                .p_0()
+                .overflow_hidden()
+                .trigger(
+                    Button::new("settings")
+                        .ghost()
+                        .small()
+                        .icon(IconName::Settings)
+                        .tooltip(t!("titleBar.settings").to_string()),
+                )
+                .content(move |_, _, _| panel.clone()),
+        )
     }
 }
 

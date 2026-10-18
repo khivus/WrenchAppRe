@@ -81,12 +81,22 @@ pub struct ServerInfo {
     pub server_path: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct CharacterDetails {
     pub name: String,
     pub corporation: Option<String>,
+    pub alliance: Option<String>,
+    pub created_at: Option<String>,
     // 64px JPEG from the EVE image server, when it could be fetched
     pub portrait: Option<std::sync::Arc<[u8]>>,
+}
+
+impl CharacterDetails {
+    pub fn creation_date(&self) -> Option<&str> {
+        self.created_at
+            .as_deref()
+            .map(|date| date.split('T').next().unwrap_or(date))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
