@@ -20,7 +20,7 @@ This is [khivus's fork](https://github.com/khivus/eve-wrench-app) of
 **0.4.1**. See [CHANGELOG.md](CHANGELOG.md) for the changes. Upstream update
 checks are disabled; download new fork versions from this repository's releases.
 
-<img width="1363" height="893" alt="EVE Wrench" src="https://github.com/user-attachments/assets/c8df4ab3-96cb-4bda-bc00-a72e43b43a51" />
+<img width="1904" height="1021" alt="eve-wrench-demo" src="https://github.com/user-attachments/assets/83479f1b-ae8e-4348-93ee-5eb28de5ae72" />
 
 ## What it does
 
