@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.5.1 - 2026-10-19
+
+### Added
+
+- Merge upstream drone group presets from `570cf45`: open **Drone groups** in
+  an account's menu to select drone families, customize names with max-skill
+  statistics, and review changes before saving.
+- Bundled drone catalog, cached item icons, background catalog refresh from
+  upstream, and the standalone catalog generator and workflow.
+- Save the naming pattern alongside the fork's existing source, copy-group,
+  and character-column preferences. Drone group writes use automatic backups
+  and preserve groups that contain drones.
+
+### Release
+
+- Windows x64 portable executable with SHA-256 checksums.
+- Verified on Windows with formatting, Clippy with warnings denied, and 68
+  workspace tests, including drone file round-trips, backups, checksum
+  preservation, saved preferences, and headless dialog interactions.
+- Live EVE testing was not performed. macOS and Linux binaries are not included.
+
 ## 0.4.1 - 2026-10-18
 
 First release of khivus's fork, based on EVE Wrench 0.4.0.

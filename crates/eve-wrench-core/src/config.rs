@@ -24,6 +24,9 @@ pub struct Config {
     pub copy_groups: HashMap<String, bool>,
     #[serde(default)]
     pub character_columns: CharacterColumns,
+    // None means the built-in default pattern
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drone_group_pattern: Option<String>,
     #[serde(flatten)]
     other: serde_json::Map<String, serde_json::Value>,
 }
@@ -91,6 +94,7 @@ impl Default for Config {
             default_sources: DefaultSources::default(),
             copy_groups: HashMap::new(),
             character_columns: CharacterColumns::default(),
+            drone_group_pattern: None,
             other: serde_json::Map::new(),
         }
     }
@@ -142,10 +146,35 @@ mod tests {
     fn auto_backup_defaults_on() {
         let config: Config = serde_json::from_str("{}").unwrap();
         assert!(config.auto_backup);
+        assert!(config.drone_group_pattern.is_none());
         assert!(!config.default_sources.has_any());
         for group in crate::copy::COPY_GROUPS {
             assert_eq!(config.copy_group_enabled(group), group.default_on);
         }
+    }
+
+    #[test]
+    fn drone_pattern_round_trips_with_existing_fork_preferences() {
+        let json = serde_json::json!({
+            "defaultSources": {
+                "characterPath": "/eve/core_char_1.dat",
+                "accountPath": "/eve/core_user_2.dat"
+            },
+            "copyGroups": {"overview": false, "slots": true},
+            "characterColumns": {"corporation": false, "alliance": true, "creationDate": false},
+            "theme": "dark",
+            "locale": "zh-CN",
+            "extra": 42
+        });
+        let mut config: Config = serde_json::from_value(json.clone()).unwrap();
+        config.drone_group_pattern = Some("{name}[ {damage}]".into());
+        let written = serde_json::to_value(&config).unwrap();
+        assert_eq!(written["droneGroupPattern"], "{name}[ {damage}]");
+        for (key, value) in json.as_object().unwrap() {
+            assert_eq!(&written[key], value, "{key}");
+        }
+        let restored: Config = serde_json::from_value(written).unwrap();
+        assert_eq!(restored, config);
     }
 
     #[test]

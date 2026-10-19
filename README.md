@@ -6,17 +6,18 @@
 </p>
 
 <p align="center">
-  <img alt="CI" src="https://github.com/khivus/eve-wrench-app/actions/workflows/ci.yml/badge.svg">
-  <img alt="Latest release" src="https://img.shields.io/github/v/release/khivus/eve-wrench-app?include_prereleases&sort=semver">
+  <img alt="CI" src="https://github.com/khivus/WrenchAppRe/actions/workflows/ci.yml/badge.svg">
+  <img alt="Latest release" src="https://img.shields.io/github/v/release/khivus/WrenchAppRe?include_prereleases&sort=semver">
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-informational">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-blue">
 </p>
 
 ---
 
-This is [khivus's fork](https://github.com/khivus/eve-wrench-app) of
+This is [khivus's fork](https://github.com/khivus/WrenchAppRe) of
 [EVE Wrench](https://github.com/eve-wrench/eve-wrench-app), based on upstream
-0.4.0. Fork releases continue with standard semantic versions, starting at
+0.4.0, with drone group presets imported from upstream commit `570cf45`.
+Fork releases continue with standard semantic versions, starting at
 **0.4.1**. See [CHANGELOG.md](CHANGELOG.md) for the changes. Upstream update
 checks are disabled; download new fork versions from this repository's releases.
 
@@ -35,6 +36,8 @@ something. EVE Wrench turns that into a safe, visual workflow.
   before every change
 - **🛰️ Edit probe formations** in a dedicated 3D editor, with presets, no client
   restart required
+- **🤖 Set up drone groups** named with max-skill stats, picked from every drone
+  in the game
 - **🗂️ Export & import** your whole setup as a single portable archive
 - **🏷️ Identify** accounts and characters with ESI portraits and custom aliases
 - **🌐 Every server**: Tranquility, Singularity, Thunderdome, and Serenity
@@ -121,6 +124,27 @@ dedicated editor window (with the same custom title bar as the main app).
 - **Safe saves**: writes re-encode the file losslessly, back it up first, and
   stay in sync live with the main window
 
+### 🤖 Drone groups
+
+Open the ⋯ menu on any **account** and pick **Drone groups** to add custom drone
+groups to the account in three steps.
+
+- **Groups**: one group per drone family (Hobgoblin covers the T1, T2, navy and
+  faction versions), one per EWAR effect and size (Light ECM, Heavy Stasis
+  Web), plus logistics, mining, salvage and special drones, with their in-game
+  icons
+- **Naming**: pick a style or write a pattern such as
+  `{name}[ | {damage}][ | {dps}][ | {speed}]`. Stats are the T2 drone at max
+  skills, simulated with DarkFenX's [refine](https://github.com/DarkFenX/refine)
+  engine: _Hobgoblin | Therm | 99dps | 4.2km/s_
+- **Review** every group before saving. Groups are created empty: drag your
+  drones into them in game. Your own groups are left alone, and a group that
+  already holds drones is never removed
+
+The app checks upstream for newer drone catalog data in the background and
+keeps a bundled catalog available offline. Catalog refreshes do not install
+or replace the app.
+
 ### 🗂️ Import & export
 
 Export **all** your settings, backups, and aliases into a single `.zip` archive
@@ -161,9 +185,9 @@ automatically.
 
 ## Installation
 
-Grab the latest fork build from [**Releases**](https://github.com/khivus/eve-wrench-app/releases).
+Grab the latest fork build from [**Releases**](https://github.com/khivus/WrenchAppRe/releases).
 
-Version **0.4.1** provides **EVE-Wrench_0.4.1_x64-portable.exe** for Windows x64.
+Version **0.5.1** provides **EVE-Wrench_0.5.1_x64-portable.exe** for Windows x64.
 Download and run it directly; no installation is needed. The release also includes
 SHA-256 checksums. macOS and Linux source support and packaging workflows are
 retained from upstream, but this fork release does not include builds for them.
@@ -268,8 +292,8 @@ settings_Default/
 `clang libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev libvulkan1`.
 
 ```bash
-git clone https://github.com/khivus/eve-wrench-app.git
-cd eve-wrench-app
+git clone https://github.com/khivus/WrenchAppRe.git
+cd WrenchAppRe
 cargo run -p eve-wrench
 ```
 
@@ -277,7 +301,7 @@ The workspace has two crates:
 
 | Crate                     | Contents                                                                        |
 | ------------------------- | ------------------------------------------------------------------------------- |
-| `crates/eve-wrench-core`  | Settings discovery, backups, selective copy, formations, archives, ESI, updates |
+| `crates/eve-wrench-core`  | Settings discovery, backups, selective copy, formations, drone groups, archives, ESI, updates |
 | `crates/eve-wrench`       | The desktop app, built with [GPUI](https://www.gpui.rs/) and [GPUI Kit](https://gpui-kit.com) |
 
 **Commands**
@@ -291,6 +315,17 @@ The workspace has two crates:
 | `cargo packager --release -p eve-wrench`           | Build installers ([cargo-packager](https://github.com/crabnebula-dev/cargo-packager)) |
 
 Translations live in `crates/eve-wrench/locales` (English and Simplified Chinese).
+
+**Drone data.** `crates/eve-wrench-core/data/drone_groups.json` is generated by
+`tools/drone-catalog`, which downloads the SDE and simulates every drone with
+refine. The tool is not part of the workspace: refine needs the nightly pinned in
+its `rust-toolchain.toml`, and it is AGPL licensed, so it is never linked into
+the app. Run `cargo run --release` in that folder to regenerate the file. The
+_Drone catalog_ workflow checks daily for a new SDE build and opens a pull
+request with the regenerated file. This fork fetches runtime catalog updates
+from the original `eve-wrench/eve-wrench-app` repository's `main` branch.
+It needs _Allow GitHub Actions to create and approve pull requests_ enabled in
+the repository's Actions settings.
 
 CI runs `cargo fmt`, `clippy -D warnings`, and `test` on every push and PR.
 

@@ -4,6 +4,7 @@ mod copy_panel;
 mod copy_plan;
 mod default_sources;
 mod dialogs;
+mod drone_groups;
 mod entry_columns;
 mod ordering;
 mod profiles;
@@ -235,6 +236,17 @@ impl MainView {
             }),
         ];
 
+        // A newer drone catalog only matters the next time the picker opens,
+        // so failures stay silent and the built-in one keeps working
+        if !cfg!(test) {
+            let data_dir = store.read(cx).locations().data_dir().to_path_buf();
+            cx.background_spawn(async move {
+                eve_wrench_core::drone_groups::load_cached_catalog(&data_dir);
+                let _ = eve_wrench_core::drone_groups::refresh_catalog(&data_dir);
+            })
+            .detach();
+        }
+
         // Disabled for this fork: do not check or install upstream releases.
         /*
         cx.spawn_in(window, async move |this, cx| {
@@ -290,7 +302,6 @@ impl MainView {
         let Some(data) = self.store.read(cx).data() else {
             return;
         };
-
         self.source = match self.source.take() {
             Some(Source::Entry(e)) => data.find_entry(&e.path).cloned().map(Source::Entry),
             Some(Source::Backup(b)) => data
