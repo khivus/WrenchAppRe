@@ -425,15 +425,15 @@ pub enum Pattern {
     Ring,
     // Evenly spaced along the axis, centered on the ship
     Line,
-    // Spread over a sphere
-    Sphere,
+    // Cube vertices for an eight-probe formation
+    Cube,
 }
 
 pub const PATTERNS: [Pattern; 4] = [
     Pattern::Pinpoint,
     Pattern::Ring,
     Pattern::Line,
-    Pattern::Sphere,
+    Pattern::Cube,
 ];
 
 // The two axes across `axis`, in right-handed order.
@@ -460,7 +460,7 @@ impl Pattern {
             Pattern::Pinpoint => "pinpoint",
             Pattern::Ring => "ring",
             Pattern::Line => "line",
-            Pattern::Sphere => "sphere",
+            Pattern::Cube => "cube",
         }
     }
 
@@ -508,7 +508,7 @@ impl Pattern {
                     probe_at([(u, 0.), (v, 0.), (axis, offset)], range)
                 })
                 .collect(),
-            Pattern::Sphere => sphere_points(count)
+            Pattern::Cube => sphere_points(count)
                 .into_iter()
                 .map(|[a, b, c]| {
                     probe_at(

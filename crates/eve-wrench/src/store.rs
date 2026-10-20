@@ -24,7 +24,6 @@ pub struct Store {
     portraits: HashMap<String, Arc<Image>>,
     loading: bool,
     _load: Option<Task<()>>,
-    editor_windows: HashMap<String, AnyWindowHandle>,
 }
 
 struct GlobalStore(Entity<Store>);
@@ -51,7 +50,6 @@ impl Store {
             portraits: HashMap::new(),
             loading: false,
             _load: None,
-            editor_windows: HashMap::new(),
         });
         cx.set_global(GlobalStore(store));
     }
@@ -69,7 +67,6 @@ impl Store {
                 portraits: HashMap::new(),
                 loading: false,
                 _load: None,
-                editor_windows: HashMap::new(),
             };
             store.reload(cx);
             store
@@ -197,13 +194,5 @@ impl Store {
         }
         cx.notify();
         Ok(())
-    }
-
-    pub fn editor_window(&self, path: &str) -> Option<AnyWindowHandle> {
-        self.editor_windows.get(path).copied()
-    }
-
-    pub fn register_editor_window(&mut self, path: String, window: AnyWindowHandle) {
-        self.editor_windows.insert(path, window);
     }
 }

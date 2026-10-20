@@ -19,75 +19,75 @@ use gpui_kit::*;
 use rust_i18n::t;
 
 use super::MainView;
+use crate::store::StoreEvent;
 use crate::ui::{self, StyleExt as _};
 
 impl MainView {
-    // Reads which presets the account already has, then opens the picker
-    // with those selected.
-    pub(super) fn edit_drone_groups(
-        &mut self,
+    pub(super) fn create_drone_editor(
+        &self,
         entry: SettingsEntry,
+        present: Option<HashSet<String>>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        let path = PathBuf::from(&entry.path);
-        cx.spawn_in(window, async move |this, cx| {
-            let present = cx
-                .background_spawn({
-                    let path = path.clone();
-                    async move { drone_groups::read_drone_groups(&path) }
-                })
-                .await;
-            this.update_in(cx, |this, window, cx| match present {
-                Ok(present) => this.show_drone_groups_dialog(entry, present, window, cx),
-                Err(e) => ui::notify_error(t!("toast.droneGroupsLoadFailed"), e, window, cx),
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    fn show_drone_groups_dialog(
-        &mut self,
-        entry: SettingsEntry,
-        present: HashSet<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let title = t!("droneGroups.title", name = entry.display_name).to_string();
+    ) -> Entity<DroneGroupsEditor> {
         let main = cx.entity().downgrade();
-        let pattern = (self.store.read(cx).config().drone_group_pattern.clone())
+        let pattern = self
+            .store
+            .read(cx)
+            .config()
+            .drone_group_pattern
+            .clone()
             .unwrap_or_else(|| DEFAULT_PATTERN.to_string());
         let pattern_input = cx.new(|cx| InputState::new(window, cx).default_value(pattern));
-        let dialog_view = cx.new(|cx| DroneGroupsDialog {
-            path: PathBuf::from(entry.path),
+        let saved_pattern = pattern_input.read(cx).value().to_string();
+        let store = self.store.clone();
+        let loading = present.is_none();
+        let present = present.unwrap_or_default();
+        let editor = cx.new(|cx: &mut Context<DroneGroupsEditor>| DroneGroupsEditor {
+            path: PathBuf::from(&entry.path),
             step: Step::Groups,
             selected: present.clone(),
             present,
             main,
+            saved_pattern,
+            disk_changed: false,
+            loading,
+            error: None,
+            saving: false,
             icons: HashMap::new(),
             _subscription: cx.subscribe(&pattern_input, |_, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
                     cx.notify();
                 }
             }),
+            _store_subscription: cx.subscribe_in(&store, window, |this, _, event, window, cx| {
+                if matches!(event, StoreEvent::DataChanged) && !this.saving && !this.loading {
+                    if this.selected != this.present || this.pattern(cx) != this.saved_pattern {
+                        this.disk_changed = true;
+                        cx.notify();
+                    } else {
+                        this.load(window, cx);
+                    }
+                }
+            }),
             pattern_input,
         });
-
-        // Icons fill in once downloaded; cached ones arrive almost at once
+        if loading {
+            editor.update(cx, |editor, cx| editor.load(window, cx));
+        }
         if !cfg!(test) {
             let type_ids: Vec<i64> = drone_groups::catalog()
                 .iter()
                 .filter_map(|p| p.type_id)
                 .collect();
             let cache_dir = self.store.read(cx).locations().data_dir().join("icons");
-            let view = dialog_view.downgrade();
+            let view = editor.downgrade();
             cx.spawn(async move |_, cx| {
                 let icons = cx
                     .background_spawn(async move { esi::type_icons(&type_ids, &cache_dir) })
                     .await;
-                view.update(cx, |dialog, cx| {
-                    dialog.icons = icons
+                view.update(cx, |editor, cx| {
+                    editor.icons = icons
                         .into_iter()
                         .map(|(id, png)| {
                             (
@@ -102,12 +102,78 @@ impl MainView {
             })
             .detach();
         }
+        editor
+    }
 
+    fn prompt_drone_group_save(
+        &mut self,
+        path: PathBuf,
+        selected: HashSet<String>,
+        pattern: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let main = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, _, _| {
+            let append_main = main.clone();
+            let replace_main = main.clone();
+            let append_path = path.clone();
+            let replace_path = path.clone();
+            let append_selected = selected.clone();
+            let replace_selected = selected.clone();
+            let append_pattern = pattern.clone();
+            let replace_pattern = pattern.clone();
             dialog
-                .title(title.clone())
-                .w(px(900.))
-                .child(dialog_view.clone())
+                .title(t!("droneGroups.saveModeTitle").to_string())
+                .child(
+                    v_flex()
+                        .gap_4()
+                        .child(t!("droneGroups.saveModeHint").to_string())
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("drone-save-append")
+                                        .outline()
+                                        .label(t!("droneGroups.append").to_string())
+                                        .on_click(move |_, window, cx| {
+                                            window.close_dialog(cx);
+                                            append_main
+                                                .update(cx, |main, cx| {
+                                                    main.save_drone_groups(
+                                                        append_path.clone(),
+                                                        append_selected.clone(),
+                                                        append_pattern.clone(),
+                                                        drone_groups::DroneSaveMode::Append,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                                .ok();
+                                        }),
+                                )
+                                .child(
+                                    Button::new("drone-save-replace")
+                                        .danger()
+                                        .label(t!("droneGroups.replace").to_string())
+                                        .on_click(move |_, window, cx| {
+                                            window.close_dialog(cx);
+                                            replace_main
+                                                .update(cx, |main, cx| {
+                                                    main.save_drone_groups(
+                                                        replace_path.clone(),
+                                                        replace_selected.clone(),
+                                                        replace_pattern.clone(),
+                                                        drone_groups::DroneSaveMode::Replace,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                })
+                                                .ok();
+                                        }),
+                                ),
+                        ),
+                )
         });
     }
 
@@ -116,29 +182,69 @@ impl MainView {
         path: PathBuf,
         selected: HashSet<String>,
         pattern: String,
+        mode: drone_groups::DroneSaveMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let backup = self.store.read(cx).config().auto_backup;
-        let count = selected.len();
         let stored = (pattern != DEFAULT_PATTERN).then(|| pattern.clone());
         if let Err(e) = self.store.update(cx, |store, cx| {
             store.update_config(cx, |config| config.drone_group_pattern = stored)
         }) {
             ui::notify_error(t!("toast.updateSettingFailed"), e, window, cx);
+            return;
         }
+        let key = path.to_string_lossy().into_owned();
+        if let Some(editor) = self.drone_editors.get(&key) {
+            editor.update(cx, |editor, cx| {
+                editor.saving = true;
+                cx.notify();
+            });
+        }
+        let source = key.clone();
+        let saved_selected = selected.clone();
+        let saved_pattern = pattern.clone();
         self.run_job(
             window,
             cx,
-            move |_| drone_groups::write_drone_groups(&path, &selected, &pattern, backup),
-            move |_, result, window, cx| match result {
-                Ok(()) => ui::notify_success(
-                    t!("toast.droneGroupsSaved"),
-                    t!("toast.droneGroupsSavedDesc", count = count),
-                    window,
-                    cx,
-                ),
-                Err(e) => ui::notify_error(t!("toast.droneGroupsSaveFailed"), e, window, cx),
+            move |_| {
+                drone_groups::write_drone_groups_with_mode(
+                    &path, &selected, &pattern, mode, backup,
+                )?;
+                drone_groups::read_drone_groups_with_pattern(&path, &pattern)
+            },
+            move |main, result, window, cx| {
+                if let Some(editor) = main.drone_editors.get(&key) {
+                    editor.update(cx, |editor, cx| {
+                        editor.saving = false;
+                        if let Ok(present) = &result {
+                            editor.present = present.clone();
+                            if editor.selected == saved_selected {
+                                editor.selected = present.clone();
+                            }
+                            editor.saved_pattern = saved_pattern.clone();
+                            editor.disk_changed = false;
+                        }
+                        cx.notify();
+                    });
+                }
+                match result {
+                    Ok(present) => {
+                        ui::notify_success(
+                            t!("toast.droneGroupsSaved"),
+                            t!("toast.droneGroupsSavedDesc", count = present.len()),
+                            window,
+                            cx,
+                        );
+                        main.prompt_editor_sync(
+                            source.clone(),
+                            super::editors::EditorSyncKind::Drones(mode),
+                            window,
+                            cx,
+                        );
+                    }
+                    Err(e) => ui::notify_error(t!("toast.droneGroupsSaveFailed"), e, window, cx),
+                }
             },
         );
     }
@@ -177,7 +283,12 @@ impl Step {
     }
 }
 
-struct DroneGroupsDialog {
+pub(super) struct DroneGroupsEditor {
+    saved_pattern: String,
+    disk_changed: bool,
+    loading: bool,
+    saving: bool,
+    error: Option<String>,
     path: PathBuf,
     step: Step,
     // Presets the account has now, and the ones it will have
@@ -187,9 +298,42 @@ struct DroneGroupsDialog {
     pattern_input: Entity<InputState>,
     icons: HashMap<i64, Arc<Image>>,
     _subscription: Subscription,
+    _store_subscription: Subscription,
 }
 
-impl DroneGroupsDialog {
+impl DroneGroupsEditor {
+    pub(super) fn is_dirty(&self, cx: &App) -> bool {
+        self.selected != self.present || self.pattern(cx) != self.saved_pattern
+    }
+
+    fn load(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.loading = true;
+        self.error = None;
+        self.disk_changed = false;
+        let path = self.path.clone();
+        let pattern = self.saved_pattern.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = cx
+                .background_spawn(async move {
+                    drone_groups::read_drone_groups_with_pattern(&path, &pattern)
+                })
+                .await;
+            this.update_in(cx, |this, _, cx| {
+                this.loading = false;
+                match result {
+                    Ok(present) => {
+                        this.present = present.clone();
+                        this.selected = present;
+                    }
+                    Err(e) => this.error = Some(e),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn pattern(&self, cx: &App) -> String {
         self.pattern_input.read(cx).value().to_string()
     }
@@ -497,20 +641,21 @@ impl DroneGroupsDialog {
             .map(|token| {
                 h_flex()
                     .w_1_2()
+                    .items_start()
                     .gap_2()
                     .py_0p5()
                     .text_xs()
                     .child(
                         div()
-                            .w(px(64.))
+                            .w(px(92.))
                             .flex_none()
                             .font_medium()
                             .child(format!("{{{token}}}")),
                     )
                     .child(
                         div()
+                            .flex_1()
                             .min_w_0()
-                            .truncate()
                             .text_color(muted)
                             .child(t!(format!("droneGroups.tokens.{token}")).to_string()),
                     )
@@ -519,7 +664,7 @@ impl DroneGroupsDialog {
 
         let invalid = error.is_some();
         let status = match error {
-            Some(PatternError::MustStartWithName) => t!("droneGroups.patternStart").to_string(),
+            Some(PatternError::MissingName) => t!("droneGroups.patternName").to_string(),
             Some(PatternError::UnknownToken(token)) => {
                 t!("droneGroups.patternToken", token = token).to_string()
             }
@@ -549,6 +694,12 @@ impl DroneGroupsDialog {
                     .child(
                         Self::section_header(t!("droneGroups.custom").to_string(), None, cx)
                             .child(check_mark(custom, cx)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(t!("droneGroups.patternHint").to_string()),
                     )
                     .child(
                         div()
@@ -722,8 +873,16 @@ impl DroneGroupsDialog {
             .child(
                 Button::new("drone-groups-cancel")
                     .ghost()
-                    .label(t!("common.cancel").to_string())
-                    .on_click(|_, window, cx| window.close_dialog(cx)),
+                    .label(t!("formationEditor.reset").to_string())
+                    .disabled(self.saving)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.selected = this.present.clone();
+                        this.step = Step::Groups;
+                        let pattern = this.saved_pattern.clone();
+                        this.pattern_input
+                            .update(cx, |input, cx| input.set_value(pattern, window, cx));
+                        cx.notify();
+                    })),
             )
             .when_some(back, |this, back| {
                 this.child(
@@ -752,17 +911,18 @@ impl DroneGroupsDialog {
                     Button::new("drone-groups-save")
                         .primary()
                         .label(t!("droneGroups.save", count = self.selected.len()).to_string())
-                        .disabled(invalid)
+                        .disabled(invalid || self.saving)
                         .on_click(cx.listener(|this, _, window, cx| {
                             let path = this.path.clone();
                             let selected = this.selected.clone();
                             let pattern = this.pattern(cx);
                             this.main
                                 .update(cx, |main, cx| {
-                                    main.save_drone_groups(path, selected, pattern, window, cx)
+                                    main.prompt_drone_group_save(
+                                        path, selected, pattern, window, cx,
+                                    )
                                 })
                                 .ok();
-                            window.close_dialog(cx);
                         })),
                 ),
             })
@@ -792,8 +952,28 @@ fn check_mark(selected: bool, cx: &App) -> Div {
         })
 }
 
-impl Render for DroneGroupsDialog {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl Render for DroneGroupsEditor {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.loading {
+            return div()
+                .flex_1()
+                .p_4()
+                .child(t!("formationEditor.loading").to_string())
+                .into_any_element();
+        }
+        if let Some(error) = &self.error {
+            return v_flex()
+                .p_4()
+                .gap_3()
+                .child(error.clone())
+                .child(
+                    Button::new("drone-retry")
+                        .outline()
+                        .label(t!("common.refresh").to_string())
+                        .on_click(cx.listener(|this, _, window, cx| this.load(window, cx))),
+                )
+                .into_any_element();
+        }
         let presets = drone_groups::catalog();
         let error = drone_groups::validate_pattern(&self.pattern(cx)).err();
         let invalid = error.is_some();
@@ -804,18 +984,38 @@ impl Render for DroneGroupsDialog {
         };
 
         v_flex()
+            .id("drone-editor")
+            .test_support()
+            .flex_1()
+            .min_h_0()
+            .p_4()
             .gap_3()
+            .when(self.disk_changed, |this| {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .child(t!("formationEditor.fileChanged").to_string())
+                        .child(
+                            Button::new("drone-reload")
+                                .outline()
+                                .small()
+                                .label(t!("common.refresh").to_string())
+                                .on_click(cx.listener(|this, _, window, cx| this.load(window, cx))),
+                        ),
+                )
+            })
             .child(self.render_steps(invalid, cx))
             .child(
                 div()
                     .id("drone-groups-body")
-                    // Fill the window, leaving room for the title, steps and footer
-                    .h((window.viewport_size().height - px(300.)).clamp(px(280.), px(720.)))
+                    .flex_1()
+                    .min_h_0()
                     .overflow_y_scroll()
                     .pr_1()
                     .child(body),
             )
             .child(self.render_footer(invalid, cx))
+            .into_any_element()
     }
 }
 
@@ -855,12 +1055,16 @@ mod tests {
         });
         cx.update_window(handle, |_, window, cx| {
             main.update(cx, |main, cx| {
-                main.show_drone_groups_dialog(
+                main.tab = Some(super::super::Tab::Drones);
+                main.editor_server = Some(account.server);
+                let path = account.path.clone();
+                let editor = main.create_drone_editor(
                     account,
-                    HashSet::from(["hobgoblin".into()]),
+                    Some(HashSet::from(["hobgoblin".into()])),
                     window,
                     cx,
                 );
+                main.drone_editors.insert(path, editor);
             });
             window.render_frame(cx);
             window.click("drone-tile-hobgoblin", cx);

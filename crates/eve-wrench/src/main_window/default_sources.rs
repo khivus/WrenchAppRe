@@ -16,7 +16,12 @@ use std::rc::Rc;
 impl MainView {
     pub(super) fn active_sources(&self, cx: &App) -> Vec<Source> {
         if !self.using_default_sources {
-            return self.source.iter().cloned().collect();
+            return self
+                .source
+                .iter()
+                .chain(&self.other_source)
+                .cloned()
+                .collect();
         }
         let store = self.store.read(cx);
         let Some(data) = store.data() else {
@@ -36,6 +41,11 @@ impl MainView {
                 .source
                 .as_ref()
                 .filter(|source| source.kind() == kind)
+                .or_else(|| {
+                    self.other_source
+                        .as_ref()
+                        .filter(|source| source.kind() == kind)
+                })
                 .cloned();
         }
         let store = self.store.read(cx);
@@ -54,6 +64,7 @@ impl MainView {
         }
         self.using_default_sources = self.store.read(cx).config().default_sources.has_any();
         self.source = None;
+        self.other_source = None;
         let sources = self.active_sources(cx);
         self.targets.retain(|target| {
             sources

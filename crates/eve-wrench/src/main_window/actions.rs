@@ -41,20 +41,35 @@ impl MainView {
     }
 
     pub(super) fn refresh(&mut self, cx: &mut Context<Self>) {
+        #[cfg(test)]
+        {
+            self.reload_requests += 1;
+        }
         self.announce_refresh = true;
+        self.refresh_status = None;
         self.store.update(cx, |store, cx| store.reload(cx));
     }
 
-    // Switching to a source of the other kind drops targets that no longer fit.
+    // Keep one manually selected account and character, just like saved defaults.
     pub(super) fn set_source(&mut self, source: Source, cx: &mut Context<Self>) {
         if self.copying {
             return;
         }
-        let kind = source.kind();
-        self.targets
-            .retain(|t| t.kind == kind && t.path != source.path());
+        if matches!(source, Source::Backup(_)) {
+            self.other_source = None;
+        } else {
+            self.other_source = self.active_sources(cx).into_iter().find(|previous| {
+                matches!(previous, Source::Entry(_)) && previous.kind() != source.kind()
+            });
+        }
         self.using_default_sources = false;
         self.source = Some(source);
+        let sources = self.active_sources(cx);
+        self.targets.retain(|target| {
+            sources
+                .iter()
+                .any(|source| source.kind() == target.kind && source.path() != target.path)
+        });
         cx.notify();
     }
 

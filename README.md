@@ -18,8 +18,8 @@ This is [khivus's fork](https://github.com/khivus/WrenchAppRe) of
 [EVE Wrench](https://github.com/eve-wrench/eve-wrench-app), based on upstream
 0.4.0, with drone group presets imported from upstream commit `570cf45`.
 Fork releases continue with standard semantic versions, starting at
-**0.4.1**. See [CHANGELOG.md](CHANGELOG.md) for the changes. Upstream update
-checks are disabled; download new fork versions from this repository's releases.
+**0.4.1**. See [CHANGELOG.md](CHANGELOG.md) for the changes. Update checks use
+this fork's releases only.
 
 <img width="1904" height="1021" alt="eve-wrench-demo" src="https://github.com/user-attachments/assets/83479f1b-ae8e-4348-93ee-5eb28de5ae72" />
 
@@ -76,6 +76,8 @@ migrate, and every target is backed up first.
 | ---------------------------- | ------------------------------------------------------------------------------------------ |
 | Overview profiles            | Overview presets, tab setup, state colors, and column layout                               |
 | Probe formations             | Custom probe scanner formations                                                            |
+| Drone group names & ship favorites | Group definitions and per-ship favorite groups (on by default)                          |
+| Include drone assignments     | Also replace group memberships when copying drone groups (off by default)                   |
 | Suppressed dialogs           | The "don't ask again" confirmation checkboxes                                              |
 | Audio                        | Sound levels and muted sound categories                                                    |
 | Camera & graphics            | Camera sensitivity and inertia, plus effect toggles (missiles, turrets, trails, asteroids) |
@@ -109,8 +111,11 @@ survive a reinstall of EVE Wrench.
 
 ### 🛰️ Probe formation editor
 
-Open the ⋯ menu on any **account** and pick **Probe formations** to launch a
-dedicated editor window (with the same custom title bar as the main app).
+Open **Probe formations** in the navigation row after **Backups**. The editor
+uses the main window, with visible server, profile, and account selectors. It
+starts from the selected profile, or **Default** when no profile was selected,
+and prefers the selected/default account within that profile. Drafts are kept
+per account when switching tabs or accounts.
 
 - **Presets** to start from: **Blank**, **Pinpoint**, **Drifter** (one probe
   parked behind the Drifter), and a **Directional** set that stacks all 8 probes
@@ -121,13 +126,14 @@ dedicated editor window (with the same custom title bar as the main app).
 - **Precise editing**: per-probe coordinates in km, discrete scan ranges (0.25 to
   32 AU), reorder formations, and scale a whole formation (a negative factor
   shrinks it)
-- **Safe saves**: writes re-encode the file losslessly, back it up first, and
-  stay in sync live with the main window
+- **Safe saves**: writes re-encode the file losslessly and back it up first.
+  Saving offers to sync only probe settings to chosen other accounts.
+- The pattern previously labeled **Sphere** is now called **Cube**.
 
 ### 🤖 Drone groups
 
-Open the ⋯ menu on any **account** and pick **Drone groups** to add custom drone
-groups to the account in three steps.
+Open **Drone groups** after **Probe formations** in the navigation row. It uses
+the same server, profile, and account selectors and stays in the main window.
 
 - **Groups**: one group per drone family (Hobgoblin covers the T1, T2, navy and
   faction versions), one per EWAR effect and size (Light ECM, Heavy Stasis
@@ -137,13 +143,51 @@ groups to the account in three steps.
   `{name}[ | {damage}][ | {dps}][ | {speed}]`. Stats are the T2 drone at max
   skills, simulated with DarkFenX's [refine](https://github.com/DarkFenX/refine)
   engine: _Hobgoblin | Therm | 99dps | 4.2km/s_
-- **Review** every group before saving. Groups are created empty: drag your
-  drones into them in game. Your own groups are left alone, and a group that
-  already holds drones is never removed
+  Add `{type}` for Small, Medium, Heavy, Sentry, Special, EWAR, Logistic or
+  Industry; `{type_short}` gives Sml, Med, Hev, Sen, Spec, Ewar, Logi or Ind.
+  For example, `{name} [{type_short}]` produces _Hobgoblin Sml_.
+  Tokens can go in any order: `{type_short} | {name}` produces _Sml | Hobgoblin_.
+  Keep `{name}` outside optional `[sections]` so every group has a family name.
+- **Review** every group before saving, then choose **Append missing groups**
+  or **Replace all drone groups**. Append preserves existing groups and drone
+  memberships, adding only missing names. Replace deletes every previous drone
+  group and membership and creates only the selected empty groups. Other account
+  settings are preserved. Close EVE before saving.
+- After saving, choose whether to sync group definitions and favorites to other
+  accounts. Sync follows the same **Append** or **Replace** choice: Append keeps
+  existing target groups and memberships; Replace removes them and installs only
+  the saved empty groups. Unrelated settings stay unchanged. Automatic backups
+  follow **Back up before changes**.
 
 The app checks upstream for newer drone catalog data in the background and
 keeps a bundled catalog available offline. Catalog refreshes do not install
 or replace the app.
+
+**Copying existing groups.** In **What to copy**, enable **Drone group names &
+ship favorites** and leave **Include drone assignments** unchecked to copy
+group definitions and ship favorites while preserving the target's memberships.
+Groups with the same name keep the target's drone items and group IDs, new
+source groups arrive empty, and target-only groups holding drones are retained.
+Favorite references are updated to the retained group IDs. If the same name
+belongs to different drone categories, the target group is kept.
+
+Enable **Include drone assignments** as well to replace group memberships with
+the source's individual drone item IDs. This option is available while group
+copying is enabled. Leave **Drone group names & ship favorites** unchecked to keep
+all of the target's groups, memberships, and favorites. Both choices are saved
+automatically. Group names/favorites default to on; assignments default to off.
+Explicitly saved checkbox preferences are retained.
+
+Groups and ship favorites live in the account settings, rather than in each
+character file. Membership refers to individual drone items, so copying groups
+does not recreate a ship's drone types and quantities or assign another
+character's drones. For reusable empty groups, use the **Drone groups** editor.
+Named drone-only setup snapshots are not currently available; the existing
+account backup saves the whole account file, including its drone settings.
+Such a snapshot could restore assignments to the same drone items. Reapplying
+groups to replacement drones after repackaging or reloading would also require
+identifying the current drone item IDs and mapping them to the saved groups;
+that information is not available from these settings alone.
 
 ### 🗂️ Import & export
 
@@ -178,8 +222,8 @@ automatically.
 - **Always Show Bracket Text**: show ship labels on all brackets in space, not
   just selected targets (handy for PvP awareness; may cost performance in 200+
   pilot fights; needs a client restart)
-- **Upstream updates disabled in this fork**: startup checks, manual checks, and
-  the upstream update dialog are commented out.
+- **Fork updates**: a small top-right indicator and Update button replace the
+  update dialog. Checks run at startup, every six hours, and from Settings.
 
 ---
 
@@ -187,7 +231,7 @@ automatically.
 
 Grab the latest fork build from [**Releases**](https://github.com/khivus/WrenchAppRe/releases).
 
-Version **0.5.1** provides **EVE-Wrench_0.5.1_x64-portable.exe** for Windows x64.
+Version **0.6.0** provides **EVE-Wrench_0.6.0_x64-portable.exe** for Windows x64.
 Download and run it directly; no installation is needed. The release also includes
 SHA-256 checksums. macOS and Linux source support and packaging workflows are
 retained from upstream, but this fork release does not include builds for them.
@@ -236,7 +280,7 @@ Long browser and selected-target lists render only visible rows, keeping large
 target selections inexpensive to repaint. Mouse-wheel scrolling in the browser
 uses smaller, animated steps. Default-source menus also use numeric ID order.
 
-The top-bar cogwheel contains the **Dark theme** switch; changes apply immediately
+The navigation-row cogwheel contains the **Dark theme** switch; changes apply immediately
 and are saved for the next launch. **Extra / Always Show Bracket Text** is also
 there, with a separate switch for each detected server.
 
@@ -249,7 +293,10 @@ files. Choose the account explicitly: EVE's settings files do not identify which
 account owns a character. The saved choices are restored at startup. You can add
 account and character targets together; each receives settings from its matching
 source, using the normal confirmation, copy options, and automatic backups.
-Selecting another source temporarily overrides the defaults; **Use default**
+Selecting an account and a character manually keeps both as sources, with each
+target using the matching type. Selecting another source of the same type
+replaces only that source. Manual backups remain single-source.
+Manual selections temporarily override the defaults; **Use default**
 restores the saved pair. Choose **None** in either selector to remove that saved
 choice. If a saved file is unavailable, the app shows that status and disables
 targets of that type until a valid source is chosen.
@@ -306,6 +353,15 @@ The workspace has two crates:
 
 **Commands**
 
+On Windows, close EVE Wrench and run `.\build.cmd` from the repository.
+It checks for running EVE Wrench
+processes and skips the build if any are open. Successful builds use the single
+`target/release/eve-wrench.exe` filename. Direct equivalent:
+`cargo build --locked --release -p eve-wrench` after closing the app.
+
+Reload and settings controls are in the navigation row, outside native window
+dragging. Reload feedback stays inline so it cannot cover the controls.
+
 | Command                                            | Description                        |
 | -------------------------------------------------- | ---------------------------------- |
 | `cargo run -p eve-wrench`                          | Run the app                        |
@@ -329,9 +385,19 @@ the repository's Actions settings.
 
 CI runs `cargo fmt`, `clippy -D warnings`, and `test` on every push and PR.
 
-**Auto-updates.** Disabled in this fork. The original updater code and release
-packaging configuration are retained for reference; upstream checks and the
-installation UI are commented out.
+**Portable updates.** The app checks `khivus/WrenchAppRe` releases. Windows x64
+updates use `EVE-Wrench_<version>_x64-portable.exe` and GitHub's SHA-256 asset
+digest. The app downloads and verifies the executable, then an unelevated
+helper waits for it to close, replaces the original executable at the same
+path, and restarts it. A backup is kept until the new window opens; failed
+replacement/restart restores the old executable. Settings are stored separately.
+The app must be in a folder you can write to, such as Downloads or a personal
+Apps folder. Protected folders show an inline error; there is no UAC request.
+Releases without a verified matching asset link to their release page.
+
+`build.cmd --features update-preview` keeps the top-right button visible even
+when no update is available. This is an appearance preview; normal `build.cmd`
+and GitHub release builds omit the flag and only show available updates.
 
 **Tech stack:** Rust, GPUI, GPUI Kit,
 [blue-marshal](https://github.com/TrueBrain/blue-marshal-rs), EVE ESI, Lucide.

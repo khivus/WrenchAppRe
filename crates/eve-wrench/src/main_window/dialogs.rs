@@ -4,10 +4,7 @@ use std::rc::Rc;
 
 use eve_wrench_core::SettingsEntry;
 use eve_wrench_core::archive::ImportAnalysis;
-// use eve_wrench_core::updates::APP_VERSION;
 
-// use crate::ui; // Used by the disabled update dialog.
-// use crate::updater::AvailableUpdate;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogFooter};
@@ -135,47 +132,6 @@ impl MainView {
                 .child(dialog_view.clone())
         });
     }
-
-    // Upstream update checks and installation are disabled for this fork.
-    /*
-    pub(super) fn show_update_dialog(
-        &mut self,
-        update: AvailableUpdate,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let dialog_view = cx.new(|_| UpdateDialog {
-            update,
-            installing: false,
-        });
-        window.open_dialog(cx, move |dialog, _, _| {
-            dialog
-                .w(px(448.))
-                .title(t!("update.updateAvailable").to_string())
-                .child(dialog_view.clone())
-        });
-    }
-
-    // Manual check from the settings menu; unlike the startup check it
-    // reports "up to date" and failures.
-    pub(super) fn check_for_updates(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        cx.spawn_in(window, async move |this, cx| {
-            let result = cx.background_spawn(async { crate::updater::check() }).await;
-            this.update_in(cx, |this, window, cx| match result {
-                Ok(Some(update)) => this.show_update_dialog(update, window, cx),
-                Ok(None) => ui::notify_success(
-                    t!("update.upToDate"),
-                    t!("update.upToDateDesc", version = APP_VERSION),
-                    window,
-                    cx,
-                ),
-                Err(e) => ui::notify_error(t!("update.checkFailed"), e, window, cx),
-            })
-            .ok();
-        })
-        .detach();
-    }
-    */
 }
 
 fn dialog_buttons(ok_label: String) -> DialogFooter {
@@ -386,117 +342,3 @@ impl Render for ImportDialog {
             )
     }
 }
-
-// Retained for reference; upstream updates are disabled for this fork.
-/*
-struct UpdateDialog {
-    update: AvailableUpdate,
-    installing: bool,
-}
-
-impl UpdateDialog {
-    fn install(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(installer) = self.update.installer.clone() else {
-            return;
-        };
-        self.installing = true;
-        cx.notify();
-        cx.spawn_in(window, async move |this, cx| {
-            let result = cx
-                .background_spawn(async move { crate::updater::install(&installer) })
-                .await;
-            this.update_in(cx, |this, window, cx| match result {
-                Ok(()) => cx.restart(),
-                Err(e) => {
-                    this.installing = false;
-                    ui::notify_error(t!("update.installFailed"), e, window, cx);
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-}
-
-impl Render for UpdateDialog {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let info = &self.update.info;
-        let notes: String = if info.release_notes.chars().count() > 300 {
-            info.release_notes
-                .chars()
-                .take(300)
-                .chain("...".chars())
-                .collect()
-        } else {
-            info.release_notes.clone()
-        };
-        let muted = cx.theme().muted_foreground;
-        let url = info.release_url.clone();
-
-        let primary = if self.update.installer.is_some() {
-            Button::new("update-install")
-                .primary()
-                .icon(IconName::Download)
-                .label(if self.installing {
-                    t!("update.installing").to_string()
-                } else {
-                    t!("update.install").to_string()
-                })
-                .loading(self.installing)
-                .disabled(self.installing)
-                .on_click(cx.listener(|this, _, window, cx| this.install(window, cx)))
-        } else {
-            Button::new("update-download")
-                .primary()
-                .icon(IconName::Download)
-                .label(t!("update.download").to_string())
-                .on_click(move |_, window, cx| {
-                    cx.open_url(&url);
-                    window.close_dialog(cx);
-                })
-        };
-
-        v_flex()
-            .gap_4()
-            .child(div().text_sm().text_color(muted).child(format!(
-                "v{} → v{}",
-                info.current_version, info.latest_version
-            )))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(t!("update.newVersionAvailable").to_string()),
-            )
-            .when(!notes.is_empty(), |this| {
-                this.child(
-                    div()
-                        .id("release-notes")
-                        .max_h_32()
-                        .overflow_y_scroll()
-                        .p_3()
-                        .rounded(px(6.))
-                        .bg(cx.theme().muted)
-                        .text_xs()
-                        .text_color(muted)
-                        .child(notes),
-                )
-            })
-            .child(
-                h_flex()
-                    .justify_end()
-                    .gap_2()
-                    .child(
-                        Button::new("update-later")
-                            .outline()
-                            .label(t!("update.later").to_string())
-                            .disabled(self.installing)
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .child(primary),
-            )
-    }
-}
-
-*/

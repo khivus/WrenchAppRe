@@ -6,7 +6,7 @@ mod main_window;
 mod store;
 mod table;
 mod ui;
-// mod updater; // Disabled for this fork; upstream releases must not replace it.
+mod updater;
 
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeMode};
 use gpui_kit::*;
@@ -20,6 +20,9 @@ actions!(eve_wrench, [Quit]);
 pub const LOCALES: [(&str, &str); 2] = [("en", "English"), ("zh-CN", "中文")];
 
 fn main() {
+    if updater::handle_helper_mode() {
+        return;
+    }
     gpui_kit::application()
         .with_assets(assets::AppAssets)
         .run(|cx| {
@@ -49,6 +52,7 @@ fn main() {
             }
 
             main_window::open(cx);
+            updater::complete_startup();
             cx.activate(true);
         });
 }

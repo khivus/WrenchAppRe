@@ -8,13 +8,11 @@ use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use eve_wrench_core::{ProbeFormation, formations, scan};
+use eve_wrench_core::{ProbeFormation, formations};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, Sizable as _, TitleBar, h_flex, v_flex,
-};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use rust_i18n::t;
@@ -40,32 +38,14 @@ pub fn init(cx: &mut App) {
     ]);
 }
 
-// One editor window per settings file; opening it again focuses the window.
-pub fn open(path: String, name: String, cx: &mut App) {
-    let store = Store::global(cx);
-    if let Some(window) = store.read(cx).editor_window(&path)
-        && window
-            .update(cx, |_, window, _| window.activate_window())
-            .is_ok()
-    {
-        return;
-    }
-
-    let options = WindowOptions {
-        window_bounds: Some(WindowBounds::centered(size(px(1280.), px(800.)), cx)),
-        window_min_size: Some(size(px(1040.), px(640.))),
-        app_id: Some("eve-wrench".into()),
-        window_decorations: cfg!(target_os = "linux").then_some(WindowDecorations::Client),
-        ..TitleBar::window_options()
-    };
-    let editor_path = path.clone();
-    let opened = gpui_kit::open_window(options, cx, move |window, cx| {
-        cx.new(|cx| FormationEditor::new(PathBuf::from(editor_path), name, window, cx))
-    });
-    if let Ok((window, _)) = opened {
-        store.update(cx, |store, _| store.register_editor_window(path, window));
-    }
+pub fn embedded(path: String, window: &mut Window, cx: &mut App) -> Entity<FormationEditor> {
+    cx.new(|cx| FormationEditor::new(PathBuf::from(path), window, cx))
 }
+
+pub struct FormationSaved {
+    pub path: String,
+}
+impl EventEmitter<FormationSaved> for FormationEditor {}
 
 enum LoadState {
     Loading,
@@ -101,7 +81,6 @@ struct Direction {
 pub struct FormationEditor {
     store: Entity<Store>,
     file_path: PathBuf,
-    display_name: String,
     state: LoadState,
     formations: Vec<Formation>,
     saved: Vec<Formation>,
@@ -136,12 +115,7 @@ pub struct FormationEditor {
 }
 
 impl FormationEditor {
-    fn new(
-        file_path: PathBuf,
-        display_name: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(file_path: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = Store::global(cx);
         let mut subscriptions =
             vec![
@@ -204,11 +178,9 @@ impl FormationEditor {
         let move_input = number_input("1000", window, cx);
         let spread_input = number_input("500", window, cx);
 
-        window.set_window_title(&title(&display_name));
         let mut editor = Self {
             store,
             file_path,
-            display_name,
             state: LoadState::Loading,
             formations: Vec::new(),
             saved: Vec::new(),
@@ -254,7 +226,7 @@ impl FormationEditor {
         self.formations.get_mut(self.selected)
     }
 
-    fn is_dirty(&self) -> bool {
+    pub(crate) fn is_dirty(&self) -> bool {
         self.formations != self.saved
     }
 
@@ -301,23 +273,11 @@ impl FormationEditor {
     // discard unsaved edits, in which case offer a reload instead.
     fn on_disk_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let path = self.file_path.clone();
-        let locations = self.store.read(cx).locations().clone();
         cx.spawn_in(window, async move |this, cx| {
-            let (name, disk) = cx
-                .background_spawn(async move {
-                    (
-                        scan::entry_display_name(&locations, &path),
-                        Self::read_formations(path),
-                    )
-                })
+            let disk = cx
+                .background_spawn(async move { Self::read_formations(path) })
                 .await;
             this.update_in(cx, |this, window, cx| {
-                if let Ok(name) = name
-                    && name != this.display_name
-                {
-                    window.set_window_title(&title(&name));
-                    this.display_name = name;
-                }
                 let Ok(disk) = disk else {
                     return;
                 };
@@ -469,6 +429,9 @@ impl FormationEditor {
                             window,
                             cx,
                         );
+                        cx.emit(FormationSaved {
+                            path: this.file_path.to_string_lossy().into_owned(),
+                        });
                         this.store.update(cx, |store, cx| store.reload(cx));
                     }
                     Err(e) => ui::notify_error(t!("formationEditor.saveFailed"), e, window, cx),
@@ -479,10 +442,6 @@ impl FormationEditor {
         })
         .detach();
     }
-}
-
-fn title(name: &str) -> String {
-    t!("formationEditor.title", name = name).to_string()
 }
 
 pub(super) fn editor_action(
@@ -496,37 +455,6 @@ pub(super) fn editor_action(
 }
 
 impl FormationEditor {
-    fn render_title_bar(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        TitleBar::new().child(ui::title_bar_content(
-            window,
-            h_flex()
-                .gap_2()
-                .min_w_0()
-                .child(Icon::new(IconName::Radar).small())
-                .child(
-                    div()
-                        .truncate()
-                        .text_xs()
-                        .font_semibold()
-                        .child(title(&self.display_name)),
-                ),
-            Button::new("toggle-theme")
-                .ghost()
-                .small()
-                .icon(if cx.theme().is_dark() {
-                    IconName::Sun
-                } else {
-                    IconName::Moon
-                })
-                .tooltip(t!("titleBar.toggleTheme").to_string())
-                .on_click(|_, window, cx| crate::toggle_theme(window, cx)),
-        ))
-    }
-
     fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let dirty = self.is_dirty();
         h_flex()
@@ -588,7 +516,7 @@ impl FormationEditor {
 }
 
 impl Render for FormationEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match &self.state {
             LoadState::Loading => div()
                 .flex()
@@ -642,7 +570,11 @@ impl Render for FormationEditor {
         };
 
         v_flex()
+            .id("probe-editor")
+            .test_support()
             .size_full()
+            .flex_1()
+            .min_h_0()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::undo))
@@ -654,7 +586,6 @@ impl Render for FormationEditor {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_drag_end))
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(self.render_title_bar(window, cx))
             .when(self.disk_changed, |this| {
                 let amber = ui::amber(cx);
                 this.child(

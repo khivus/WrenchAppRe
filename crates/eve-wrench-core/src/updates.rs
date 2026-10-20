@@ -1,10 +1,26 @@
-use serde::Deserialize;
+//! Fork release discovery and verified portable downloads. Blocking: use a worker.
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::Path;
+use std::time::Duration;
 
 use crate::esi::AGENT;
+use semver::Version;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
-const GITHUB_REPO: &str = "eve-wrench/eve-wrench-app";
-
+pub const GITHUB_REPO: &str = "khivus/WrenchAppRe";
+pub const RELEASES_URL: &str = "https://github.com/khivus/WrenchAppRe/releases";
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const MAX_DOWNLOAD: u64 = 512 * 1024 * 1024;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateAsset {
+    pub name: String,
+    pub url: String,
+    pub size: u64,
+    pub sha256: String,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UpdateInfo {
@@ -12,6 +28,16 @@ pub struct UpdateInfo {
     pub latest_version: String,
     pub release_url: String,
     pub release_notes: String,
+    pub asset: Option<UpdateAsset>,
+}
+
+#[derive(Deserialize)]
+struct ReleaseAsset {
+    name: String,
+    browser_download_url: String,
+    size: u64,
+    #[serde(default)]
+    digest: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -22,6 +48,10 @@ struct Release {
     body: Option<String>,
     #[serde(default)]
     draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    assets: Vec<ReleaseAsset>,
 }
 
 #[derive(Deserialize)]
@@ -31,124 +61,192 @@ enum ReleasePayload {
     Single(Release),
 }
 
-// A semver pre-release suffix ("0.3.0-preview.1") marks preview builds.
-pub fn is_preview_version(version: &str) -> bool {
-    version.contains('-')
+fn version(text: &str) -> Option<Version> {
+    Version::parse(text.trim_start_matches('v')).ok()
 }
 
-// Stable builds only look at the latest stable release (GitHub's
-// /releases/latest never returns pre-releases). Preview builds scan the full
-// release list so testers are notified about newer previews AND the next
-// stable release.
-pub fn check_for_update() -> Result<Option<UpdateInfo>, String> {
-    let url = if is_preview_version(APP_VERSION) {
-        format!(
-            "https://api.github.com/repos/{}/releases?per_page=15",
-            GITHUB_REPO
-        )
-    } else {
-        format!(
-            "https://api.github.com/repos/{}/releases/latest",
-            GITHUB_REPO
-        )
-    };
+pub fn is_preview_version(text: &str) -> bool {
+    version(text).is_some_and(|v| !v.pre.is_empty())
+}
 
-    let payload: ReleasePayload = AGENT
-        .get(&url)
-        .call()
-        .map_err(|e| format!("Failed to check for updates: {}", e))?
-        .body_mut()
-        .read_json()
-        .map_err(|e| format!("Failed to parse release: {}", e))?;
+fn trusted_asset_url(url: &str) -> bool {
+    url.starts_with("https://github.com/khivus/WrenchAppRe/releases/download/")
+}
 
+fn valid_hash(hash: &str) -> bool {
+    hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit())
+}
+
+fn select_update(payload: ReleasePayload, current: &str, windows_x64: bool) -> Option<UpdateInfo> {
+    let current_version = version(current)?;
+    let previews = !current_version.pre.is_empty();
     let releases = match payload {
         ReleasePayload::List(list) => list,
         ReleasePayload::Single(release) => vec![release],
     };
-
-    let mut best: Option<UpdateInfo> = None;
-    for release in releases.into_iter().filter(|r| !r.draft) {
-        let version = release.tag_name.trim_start_matches('v');
-        let newer_than_best = best
-            .as_ref()
-            .is_none_or(|b| is_newer_version(version, &b.latest_version));
-        if is_newer_version(version, APP_VERSION) && newer_than_best {
-            best = Some(UpdateInfo {
-                current_version: APP_VERSION.to_string(),
-                latest_version: version.to_string(),
-                release_url: release.html_url,
-                release_notes: release.body.unwrap_or_default(),
-            });
-        }
-    }
-
-    Ok(best)
+    let (release, latest) = releases
+        .into_iter()
+        .filter_map(|release| {
+            let latest = version(&release.tag_name)?;
+            (!release.draft
+                && (previews || (!release.prerelease && latest.pre.is_empty()))
+                && latest.cmp_precedence(&current_version).is_gt()
+                && release
+                    .html_url
+                    .starts_with("https://github.com/khivus/WrenchAppRe/releases/"))
+            .then_some((release, latest))
+        })
+        .max_by(|(_, a), (_, b)| a.cmp_precedence(b))?;
+    let expected_name = format!("EVE-Wrench_{latest}_x64-portable.exe");
+    let asset = windows_x64
+        .then(|| {
+            release.assets.iter().find_map(|asset| {
+                let hash = asset.digest.as_deref()?.strip_prefix("sha256:")?;
+                (asset.name == expected_name
+                    && trusted_asset_url(&asset.browser_download_url)
+                    && valid_hash(hash)
+                    && asset.size > 0
+                    && asset.size <= MAX_DOWNLOAD)
+                    .then(|| UpdateAsset {
+                        name: asset.name.clone(),
+                        url: asset.browser_download_url.clone(),
+                        size: asset.size,
+                        sha256: hash.to_ascii_lowercase(),
+                    })
+            })
+        })
+        .flatten();
+    Some(UpdateInfo {
+        current_version: current.to_string(),
+        latest_version: latest.to_string(),
+        release_url: release.html_url,
+        release_notes: release.body.unwrap_or_default(),
+        asset,
+    })
 }
 
-// Semver-ordered comparison: numeric cores first; on equal cores a stable
-// release beats any pre-release of it, and pre-releases compare by their
-// numeric identifiers ("preview.2" > "preview.1").
-fn is_newer_version(latest: &str, current: &str) -> bool {
-    fn split(v: &str) -> (Vec<u32>, Option<Vec<u32>>) {
-        let mut parts = v.splitn(2, '-');
-        let core = parts.next().unwrap_or("");
-        let pre = parts.next();
-        let nums = |s: &str| {
-            s.split('.')
-                .filter_map(|p| p.parse().ok())
-                .collect::<Vec<u32>>()
-        };
-        (nums(core), pre.map(nums))
-    }
+pub fn check_for_update() -> Result<Option<UpdateInfo>, String> {
+    let endpoint = if is_preview_version(APP_VERSION) {
+        "?per_page=100"
+    } else {
+        "/latest"
+    };
+    let url = format!("https://api.github.com/repos/{GITHUB_REPO}/releases{endpoint}");
+    let response = AGENT
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .call();
+    let mut response = match response {
+        Err(ureq::Error::StatusCode(404)) => return Ok(None),
+        Err(error) => return Err(format!("Failed to check releases: {error}")),
+        Ok(response) => response,
+    };
+    let payload = response
+        .body_mut()
+        .read_json()
+        .map_err(|error| format!("Invalid release response: {error}"))?;
+    Ok(select_update(
+        payload,
+        APP_VERSION,
+        cfg!(all(windows, target_arch = "x86_64")),
+    ))
+}
 
-    fn compare(l: &[u32], c: &[u32]) -> std::cmp::Ordering {
-        (0..l.len().max(c.len()))
-            .map(|i| {
-                l.get(i)
-                    .copied()
-                    .unwrap_or(0)
-                    .cmp(&c.get(i).copied().unwrap_or(0))
-            })
-            .find(|o| o.is_ne())
-            .unwrap_or(std::cmp::Ordering::Equal)
+/// Streams to a new file and removes incomplete, mismatched or invalid downloads.
+pub fn download_update(asset: &UpdateAsset, destination: &Path) -> Result<(), String> {
+    if !trusted_asset_url(&asset.url)
+        || !valid_hash(&asset.sha256)
+        || asset.size == 0
+        || asset.size > MAX_DOWNLOAD
+    {
+        return Err("The release has no verified portable Windows download".into());
     }
+    let agent = ureq::Agent::new_with_config(
+        ureq::config::Config::builder()
+            .user_agent(concat!("EVE-Wrench/", env!("CARGO_PKG_VERSION")))
+            .timeout_global(Some(Duration::from_secs(600)))
+            .build(),
+    );
+    let mut response = agent
+        .get(&asset.url)
+        .call()
+        .map_err(|error| format!("Download failed: {error}"))?;
+    save_download(&mut response.body_mut().as_reader(), destination, asset)
+}
 
-    let (latest_core, latest_pre) = split(latest);
-    let (current_core, current_pre) = split(current);
-
-    match compare(&latest_core, &current_core) {
-        std::cmp::Ordering::Greater => true,
-        std::cmp::Ordering::Less => false,
-        std::cmp::Ordering::Equal => match (latest_pre, current_pre) {
-            (None, Some(_)) => true, // 0.3.0 beats 0.3.0-preview.1
-            (Some(l), Some(c)) => compare(&l, &c).is_gt(),
-            _ => false,
-        },
+fn save_download(
+    reader: &mut impl Read,
+    destination: &Path,
+    asset: &UpdateAsset,
+) -> Result<(), String> {
+    let mut file = File::options()
+        .write(true)
+        .create_new(true)
+        .open(destination)
+        .map_err(|error| format!("Cannot create update file: {error}"))?;
+    let result = (|| {
+        let mut hash = Sha256::new();
+        let mut total = 0u64;
+        let mut buffer = [0u8; 65536];
+        loop {
+            let count = reader.read(&mut buffer).map_err(|e| e.to_string())?;
+            if count == 0 {
+                break;
+            }
+            total += count as u64;
+            if total > asset.size {
+                return Err("Download exceeds the release asset size".into());
+            }
+            hash.update(&buffer[..count]);
+            file.write_all(&buffer[..count])
+                .map_err(|e| e.to_string())?;
+        }
+        if total != asset.size
+            || format!("{:x}", hash.finalize()) != asset.sha256.to_ascii_lowercase()
+        {
+            return Err("Update size or SHA-256 does not match the GitHub release".into());
+        }
+        file.sync_all().map_err(|e| e.to_string())?;
+        verify_windows_exe(destination, &asset.sha256)
+    })();
+    drop(file);
+    if result.is_err() {
+        let _ = fs::remove_file(destination);
     }
+    result
+}
+
+pub fn verify_windows_exe(path: &Path, expected_hash: &str) -> Result<(), String> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = File::open(path).map_err(|e| e.to_string())?;
+    let mut header = [0u8; 64];
+    file.read_exact(&mut header)
+        .map_err(|_| "Incomplete Windows executable")?;
+    if &header[..2] != b"MZ" {
+        return Err("Update is not a Windows executable".into());
+    }
+    let offset = u32::from_le_bytes(header[60..64].try_into().unwrap()) as u64;
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|e| e.to_string())?;
+    let mut pe = [0u8; 24];
+    file.read_exact(&mut pe)
+        .map_err(|_| "Incomplete PE header")?;
+    if &pe[..4] != b"PE\0\0"
+        || u16::from_le_bytes([pe[4], pe[5]]) != 0x8664
+        || u16::from_le_bytes([pe[22], pe[23]]) & 0x2000 != 0
+    {
+        return Err("Update is not an x64 Windows application".into());
+    }
+    file.rewind().map_err(|e| e.to_string())?;
+    let mut hash = Sha256::new();
+    std::io::copy(&mut file, &mut hash).map_err(|e| e.to_string())?;
+    if !valid_hash(expected_hash)
+        || format!("{:x}", hash.finalize()) != expected_hash.to_ascii_lowercase()
+    {
+        return Err("Staged update failed SHA-256 verification".into());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn version_comparison() {
-        assert!(is_newer_version("0.3.0", "0.2.1"));
-        assert!(!is_newer_version("0.2.1", "0.2.1"));
-        assert!(!is_newer_version("0.2.0", "0.2.1"));
-        // Pre-release ordering
-        assert!(!is_newer_version("0.2.1", "0.3.0-preview.1"));
-        assert!(is_newer_version("0.3.0", "0.3.0-preview.1"));
-        assert!(!is_newer_version("0.3.0-preview.1", "0.3.0"));
-        assert!(is_newer_version("0.3.0-preview.2", "0.3.0-preview.1"));
-        assert!(!is_newer_version("0.3.0-preview.1", "0.3.0-preview.2"));
-        assert!(is_newer_version("0.3.0-preview.1", "0.2.1"));
-    }
-
-    #[test]
-    fn preview_detection() {
-        assert!(is_preview_version("0.3.0-preview.1"));
-        assert!(is_preview_version("1.0.0-rc.2"));
-        assert!(!is_preview_version("0.2.1"));
-    }
-}
+mod tests;

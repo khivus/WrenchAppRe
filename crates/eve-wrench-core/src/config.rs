@@ -182,6 +182,8 @@ mod tests {
         let mut config = Config::default();
         config.copy_groups.insert("windows".into(), false);
         config.copy_groups.insert("slots".into(), true);
+        config.copy_groups.insert("drone_groups".into(), true);
+        config.copy_groups.insert("drone_assignments".into(), true);
         config.copy_groups.insert("future_group".into(), false);
         let saved = serde_json::to_string(&config).unwrap();
         let restored: Config = serde_json::from_str(&saved).unwrap();
@@ -190,6 +192,7 @@ mod tests {
             let expected = match group.id {
                 "windows" => false,
                 "slots" => true,
+                "drone_groups" | "drone_assignments" => true,
                 _ => group.default_on,
             };
             assert_eq!(restored.copy_group_enabled(group), expected);

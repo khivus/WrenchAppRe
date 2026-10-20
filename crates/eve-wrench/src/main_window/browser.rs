@@ -53,6 +53,23 @@ pub(super) struct BrowserRows {
 }
 
 impl MainView {
+    pub(super) fn render_navigation(
+        &self,
+        data: &AppData,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let mut tabs: Vec<_> = data
+            .servers
+            .iter()
+            .map(|s| Tab::Server(s.info.id))
+            .collect();
+        tabs.extend([Tab::Backups, Tab::Probes, Tab::Drones]);
+        let active = self
+            .tab
+            .filter(|tab| tabs.contains(tab))
+            .or(tabs.first().copied());
+        self.render_tab_strip(&tabs, active, data, cx)
+    }
     pub(super) fn entry_matches_search(&self, entry: &SettingsEntry) -> bool {
         if self.entry_query.is_empty() {
             return true;
@@ -79,9 +96,7 @@ impl MainView {
             .iter()
             .map(|s| Tab::Server(s.info.id))
             .collect();
-        if !data.backups.is_empty() {
-            tabs.push(Tab::Backups);
-        }
+        tabs.extend([Tab::Backups, Tab::Probes, Tab::Drones]);
         let active = self
             .tab
             .filter(|t| tabs.contains(t))
@@ -94,6 +109,9 @@ impl MainView {
                 .find(|s| s.info.id == server)
                 .map(|s| self.render_server(s, &data, window, cx)),
             Some(Tab::Backups) => Some(self.render_backups(&data, cx).into_any_element()),
+            Some(tab @ (Tab::Probes | Tab::Drones)) => {
+                Some(self.render_editor(tab, &data, window, cx))
+            }
             None => None,
         };
 
@@ -102,7 +120,6 @@ impl MainView {
             .min_w_0()
             .overflow_hidden()
             .text_sm()
-            .child(self.render_tab_strip(&tabs, active, &data, cx))
             .when_some(active, |this, active| match active {
                 Tab::Server(server) => this.children(
                     data.servers
@@ -110,7 +127,7 @@ impl MainView {
                         .find(|s| s.info.id == server)
                         .map(|server| self.render_profile_controls(server, &data, cx)),
                 ),
-                Tab::Backups => this,
+                _ => this,
             })
             .when_some(active, |this, active| match active {
                 Tab::Server(server) => this.children(
@@ -119,7 +136,7 @@ impl MainView {
                         .find(|s| s.info.id == server)
                         .map(|server| self.render_default_sources(&data, server, cx)),
                 ),
-                Tab::Backups => this,
+                _ => this,
             })
             .when(matches!(active, Some(Tab::Server(_))), |this| {
                 this.child(
@@ -176,10 +193,26 @@ impl MainView {
                         SharedString::from(t!("titleBar.backups").to_string()),
                         Some(data.backups.len()),
                     ),
+                    Tab::Probes => (
+                        SharedString::from("tab-probes"),
+                        fg,
+                        Icon::new(IconName::Radar).xsmall().into_any_element(),
+                        SharedString::from(t!("actions.editFormations").to_string()),
+                        None,
+                    ),
+                    Tab::Drones => (
+                        SharedString::from("tab-drones"),
+                        fg,
+                        Icon::new(IconName::Drone).xsmall().into_any_element(),
+                        SharedString::from(t!("actions.editDroneGroups").to_string()),
+                        None,
+                    ),
                 };
                 let tab = *tab;
                 h_flex()
                     .id(id)
+                    .test_support()
+                    .flex_none()
                     .relative()
                     .h_full()
                     .px_3()
@@ -211,6 +244,12 @@ impl MainView {
                     })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.tab != Some(tab) {
+                            if let Some(Tab::Server(server)) = this.tab {
+                                this.editor_server = Some(server);
+                            }
+                            if let Tab::Server(server) = tab {
+                                this.editor_server = Some(server);
+                            }
                             this.tab = Some(tab);
                             this.alias_edit = None;
                             this.reset_browser_scroll();
@@ -227,7 +266,16 @@ impl MainView {
             .px_1()
             .border_b_1()
             .border_color(border)
-            .children(items)
+            .child(
+                h_flex()
+                    .id("navigation-tabs")
+                    .h_full()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_x_scroll()
+                    .children(items),
+            )
+            .child(self.render_app_controls(cx))
     }
 
     fn ordered_browser_rows(&mut self, server: &ServerData, data: &Rc<AppData>) -> Rc<BrowserRows> {
@@ -685,6 +733,10 @@ impl MainView {
             let id = entry.id.clone();
             let input = edit.input.clone();
             return h_flex()
+                .id("alias-editor")
+                .test_support()
+                .w_full()
+                .min_w_0()
                 .gap_1()
                 .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                     if event.keystroke.key == "escape" {
@@ -694,6 +746,8 @@ impl MainView {
                 }))
                 .child(
                     div()
+                        .id("alias-input")
+                        .test_support()
                         .flex_1()
                         .min_w_0()
                         .child(Input::new(&edit.input).small()),
@@ -723,15 +777,19 @@ impl MainView {
 
         let entry_for_edit = entry.clone();
         h_flex()
+            .w_full()
             .gap_2()
             .min_w_0()
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .truncate()
                     .child(entry.alias.clone().unwrap_or_else(|| "\u{2014}".into())),
             )
             .child(
                 div()
+                    .flex_none()
                     .opacity(0.)
                     .group_hover("entry-row", |s| s.opacity(1.))
                     .child(
@@ -764,39 +822,14 @@ impl MainView {
             .xsmall()
             .icon(IconName::Ellipsis)
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, window, cx| {
-                let menu = menu
-                    .when(entry.kind == SettingsKind::User, |menu| {
-                        let formations_entry = entry.clone();
-                        let drones_entry = entry.clone();
-                        menu.item(
-                            PopupMenuItem::new(t!("actions.editFormations").to_string())
-                                .icon(IconName::Radar)
-                                .on_click(move |_, _, cx| {
-                                    crate::formation_editor::open(
-                                        formations_entry.path.clone(),
-                                        formations_entry.display_name.clone(),
-                                        cx,
-                                    )
-                                }),
-                        )
-                        .item(
-                            PopupMenuItem::new(t!("actions.editDroneGroups").to_string())
-                                .icon(IconName::Drone)
-                                .on_click(view_action(&view, move |this, window, cx| {
-                                    this.edit_drone_groups(drones_entry.clone(), window, cx)
-                                })),
-                        )
-                    })
-                    .item(
-                        PopupMenuItem::new(t!("actions.createBackup").to_string())
-                            .icon(IconName::Save)
-                            .on_click(view_action(&view, {
-                                let entry = entry.clone();
-                                move |this, window, cx| {
-                                    this.create_backup(entry.clone(), window, cx)
-                                }
-                            })),
-                    );
+                let menu = menu.item(
+                    PopupMenuItem::new(t!("actions.createBackup").to_string())
+                        .icon(IconName::Save)
+                        .on_click(view_action(&view, {
+                            let entry = entry.clone();
+                            move |this, window, cx| this.create_backup(entry.clone(), window, cx)
+                        })),
+                );
 
                 let backups: Vec<BackupEntry> = data.backups_for(&entry).cloned().collect();
                 if backups.is_empty() {
@@ -1118,6 +1151,119 @@ mod tests {
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{AppContext, TestAppContext, WindowOptions, point, px};
     use std::rc::Rc;
+
+    #[gpui_kit::test]
+    fn account_custom_name_can_be_added_and_edited_from_the_row(cx: &mut TestAppContext) {
+        let (handle, view, locations, account_path) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            Store::install_for_test(sample_data(), cx);
+            let store = Store::global(cx);
+            let locations = store.read(cx).locations().clone();
+            let eve_root = locations.data_dir().join("eve");
+            let profile = eve_root
+                .join("c_ccp_eve_tq_tranquility")
+                .join("settings_Default");
+            std::fs::create_dir_all(&profile).unwrap();
+            let account_path = profile.join("core_user_2.dat");
+            std::fs::write(&account_path, b"account settings stay unchanged").unwrap();
+            store.update(cx, |store, cx| {
+                store
+                    .update_config(cx, |config| {
+                        config.custom_eve_path = Some(eve_root.to_string_lossy().into_owned());
+                    })
+                    .unwrap();
+            });
+            let (handle, view) =
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| MainView::new(window, cx))
+                })
+                .unwrap();
+            (handle, view, locations, account_path)
+        });
+        cx.run_until_parked();
+        let pencil = format!("alias-edit-{}", account_path.to_string_lossy());
+        let long_name = "A long custom account name that must leave the pencil visible — 主账号";
+        for (typed, expected, enter) in [
+            ("  Main account  ", Some("Main account"), false),
+            (long_name, Some(long_name), true),
+            ("   ", None, false),
+        ] {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                assert!(window.find(pencil.clone()).visible());
+                window.hover(pencil.clone(), cx);
+                window.click(pencil.clone(), cx);
+                assert!(
+                    view.read(cx).alias_edit.is_some(),
+                    "Pencil must open the editor"
+                );
+                window.render_frame(cx);
+                let input = window.find("alias-input").bounds();
+                assert!(
+                    input.size.width >= px(60.),
+                    "Alias input must have room to type"
+                );
+                window.click("alias-input", cx);
+                window.press("ctrl-a", cx);
+                window.input(typed, cx);
+                assert_eq!(
+                    view.read(cx)
+                        .alias_edit
+                        .as_ref()
+                        .unwrap()
+                        .input
+                        .read(cx)
+                        .value(),
+                    typed
+                );
+                if enter {
+                    window.press("enter", cx);
+                } else {
+                    window.click("alias-save", cx);
+                }
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update(|cx| {
+                assert!(
+                    view.read(cx).alias_edit.is_none(),
+                    "Save must close the editor (enter={enter})"
+                );
+                let data = Store::global(cx).read(cx).data().unwrap();
+                let account = data.find_entry(&account_path.to_string_lossy()).unwrap();
+                assert_eq!(account.alias.as_deref(), expected);
+                assert_eq!(account.display_name, expected.unwrap_or("2"));
+                let aliases: std::collections::HashMap<String, String> =
+                    serde_json::from_slice(&std::fs::read(locations.aliases_file()).unwrap())
+                        .unwrap();
+                assert_eq!(aliases.get("2").map(String::as_str), expected);
+            });
+        }
+        cx.update_window(handle, |_, window, cx| {
+            for escape in [false, true] {
+                window.click(pencil.clone(), cx);
+                window.input("Cancelled name", cx);
+                if escape {
+                    window.press("escape", cx);
+                } else {
+                    window.click("alias-cancel", cx);
+                }
+                assert!(view.read(cx).alias_edit.is_none());
+            }
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let aliases: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(locations.aliases_file()).unwrap()).unwrap();
+        assert!(aliases.get("2").is_none());
+        assert_eq!(
+            std::fs::read(&account_path).unwrap(),
+            b"account settings stay unchanged"
+        );
+        let test_dir = locations.data_dir().canonicalize().unwrap();
+        assert!(test_dir.starts_with(std::env::temp_dir().canonicalize().unwrap()));
+        std::fs::remove_dir_all(test_dir).unwrap();
+    }
 
     #[gpui_kit::test]
     fn profiles_show_separately_and_switch_without_stale_cached_rows(cx: &mut TestAppContext) {

@@ -261,19 +261,17 @@ impl Render for SettingsPanel {
                             .text_color(muted)
                             .font_medium()
                             .child(version),
-                    ), // Upstream update checking is disabled for this fork.
-                       /*
-                       .child(
-                           Button::new("check-updates")
-                               .ghost()
-                               .xsmall()
-                               .icon(IconName::RefreshCw)
-                               .label(t!("update.checkForUpdates").to_string())
-                               .on_click(
-                                   self.on_main(|this, window, cx| this.check_for_updates(window, cx)),
-                               ),
-                       ),
-                       */
+                    )
+                    .child(
+                        Button::new("check-updates")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::RefreshCw)
+                            .label(t!("update.checkForUpdates").to_string())
+                            .on_click(self.on_main(|this, window, cx| {
+                                this.check_for_updates(true, window, cx)
+                            })),
+                    ),
             )
     }
 }

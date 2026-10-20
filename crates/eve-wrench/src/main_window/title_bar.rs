@@ -3,7 +3,7 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::popover::Popover;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, TitleBar, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, TitleBar, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -19,8 +19,6 @@ impl MainView {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let loading = self.store.read(cx).is_loading();
-
         TitleBar::new().child(ui::title_bar_content(
             window,
             h_flex()
@@ -40,7 +38,28 @@ impl MainView {
                 .when(is_preview_version(APP_VERSION), |this| {
                     this.child(preview_badge(cx))
                 }),
-            h_flex().gap_1().child(self.render_settings_menu()).child(
+            div(),
+        ))
+    }
+
+    // Keep interactive controls outside the native title-bar drag region.
+    pub(super) fn render_app_controls(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let loading = self.store.read(cx).is_loading();
+        h_flex()
+            .flex_none()
+            .gap_1()
+            .child(self.render_update_indicator(cx))
+            .children(self.refresh_status.as_ref().map(|status| {
+                v_flex()
+                    .flex_none()
+                    .items_end()
+                    .px_2()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .children(status.lines().map(|line| div().child(line.to_string())))
+            }))
+            .child(self.render_settings_menu())
+            .child(
                 Button::new("refresh")
                     .ghost()
                     .small()
@@ -49,8 +68,7 @@ impl MainView {
                     .disabled(loading)
                     .tooltip(t!("common.refresh").to_string())
                     .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
-            ),
-        ))
+            )
     }
 
     fn render_settings_menu(&self) -> impl IntoElement + use<> {

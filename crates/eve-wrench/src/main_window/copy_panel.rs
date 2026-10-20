@@ -143,6 +143,7 @@ impl MainView {
             !sources.is_empty() || self.using_default_sources,
             |this| {
                 this.source = None;
+                this.other_source = None;
                 this.using_default_sources = false;
             },
             cx,
@@ -344,6 +345,10 @@ impl MainView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let hover = cx.theme().muted.opacity(0.6);
+        let config = self.store.read(cx).config();
+        let copy_drone_groups = COPY_GROUPS
+            .iter()
+            .any(|group| group.id == "drone_groups" && config.copy_group_enabled(group));
         let groups: Vec<AnyElement> = COPY_GROUPS
             .iter()
             .filter(|g| kinds.iter().any(|kind| g.applies_to(*kind)))
@@ -361,7 +366,9 @@ impl MainView {
                             .small()
                             .label(t!(format!("copyGroups.{}", id)).to_string())
                             .checked(checked)
-                            .disabled(self.copying)
+                            .disabled(
+                                self.copying || (id == "drone_assignments" && !copy_drone_groups),
+                            )
                             .on_change(cx.listener(move |this, checked: &bool, window, cx| {
                                 this.set_copy_group(id, *checked, window, cx);
                             })),
@@ -534,6 +541,8 @@ mod tests {
             .update_window(handle, |_, window, cx| {
                 view.update(cx, |view, cx| view.set_source(character.clone(), cx));
                 window.render_frame(cx);
+                assert!(window.try_find("group-row-drone_groups").is_none());
+                assert!(window.try_find("group-row-drone_assignments").is_none());
                 let row = window.find("group-row-windows").bounds();
                 window.click_at(
                     "group-row-windows",
@@ -547,6 +556,35 @@ mod tests {
                 );
                 view.update(cx, |view, cx| view.set_source(account, cx));
                 window.render_frame(cx);
+                let row = window.find("group-row-drone_groups").bounds();
+                window.click_at(
+                    "group-row-drone_groups",
+                    point(px(24.), row.size.height / 2.),
+                    cx,
+                );
+                let row = window.find("group-row-drone_assignments").bounds();
+                window.click_at(
+                    "group-row-drone_assignments",
+                    point(px(24.), row.size.height / 2.),
+                    cx,
+                );
+                assert!(
+                    !Config::load(&config_file)
+                        .copy_groups
+                        .contains_key("drone_assignments")
+                );
+                let row = window.find("group-row-drone_groups").bounds();
+                window.click_at(
+                    "group-row-drone_groups",
+                    point(px(24.), row.size.height / 2.),
+                    cx,
+                );
+                let row = window.find("group-row-drone_assignments").bounds();
+                window.click_at(
+                    "group-row-drone_assignments",
+                    point(px(24.), row.size.height / 2.),
+                    cx,
+                );
                 let row = window.find("group-row-overview").bounds();
                 window.click_at(
                     "group-row-overview",
@@ -556,6 +594,8 @@ mod tests {
                 let saved = Config::load(&config_file);
                 assert_eq!(saved.copy_groups.get("windows"), Some(&false));
                 assert_eq!(saved.copy_groups.get("overview"), Some(&false));
+                assert_eq!(saved.copy_groups.get("drone_groups"), Some(&true));
+                assert_eq!(saved.copy_groups.get("drone_assignments"), Some(&true));
                 config_file
             })
             .unwrap();
@@ -577,6 +617,8 @@ mod tests {
             let saved = Config::load(&config_file);
             assert_eq!(saved.copy_groups.get("windows"), Some(&true));
             assert_eq!(saved.copy_groups.get("overview"), Some(&false));
+            assert_eq!(saved.copy_groups.get("drone_groups"), Some(&true));
+            assert_eq!(saved.copy_groups.get("drone_assignments"), Some(&true));
             assert!(view.read(cx).targets.is_empty());
             std::fs::remove_file(&config_file).unwrap();
             std::fs::remove_dir(config_file.parent().unwrap()).unwrap();

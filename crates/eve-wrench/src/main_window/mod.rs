@@ -5,6 +5,9 @@ mod copy_plan;
 mod default_sources;
 mod dialogs;
 mod drone_groups;
+mod editors;
+#[cfg(test)]
+mod editors_tests;
 mod entry_columns;
 mod ordering;
 mod profiles;
@@ -13,6 +16,7 @@ mod search;
 mod settings_panel;
 mod targets;
 mod title_bar;
+mod updating;
 
 use std::collections::{HashMap, HashSet};
 
@@ -22,6 +26,7 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, TitleBar, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::ui::StyleExt as _;
@@ -172,6 +177,8 @@ impl Sort {
 enum Tab {
     Server(Server),
     Backups,
+    Probes,
+    Drones,
 }
 
 struct AliasEdit {
@@ -181,10 +188,16 @@ struct AliasEdit {
 }
 
 pub struct MainView {
+    update: updating::UpdateUi,
     store: Entity<Store>,
     tab: Option<Tab>,
     selected_profiles: HashMap<Server, String>,
     source: Option<Source>,
+    other_source: Option<Source>,
+    editor_server: Option<Server>,
+    editor_accounts: HashMap<String, String>,
+    probe_editors: HashMap<String, Entity<crate::formation_editor::FormationEditor>>,
+    drone_editors: HashMap<String, Entity<drone_groups::DroneGroupsEditor>>,
     using_default_sources: bool,
     targets: targets::Targets,
     target_scroll: UniformListScrollHandle,
@@ -197,6 +210,9 @@ pub struct MainView {
     selected_backups: HashSet<String>,
     alias_edit: Option<AliasEdit>,
     announce_refresh: bool,
+    refresh_status: Option<String>,
+    #[cfg(test)]
+    reload_requests: usize,
     account_scroll: scroll::TableScroll,
     character_scroll: scroll::TableScroll,
     browser_rows: Option<std::rc::Rc<browser::BrowserRows>>,
@@ -247,29 +263,32 @@ impl MainView {
             .detach();
         }
 
-        // Disabled for this fork: do not check or install upstream releases.
-        /*
-        cx.spawn_in(window, async move |this, cx| {
-            let update = cx.background_spawn(async { crate::updater::check() }).await;
-            if let Ok(Some(info)) = update {
-                this.update_in(cx, |this, window, cx| {
-                    this.show_update_dialog(info, window, cx)
-                })
-                .ok();
-            }
-        })
-        .detach();
-        */
+        Self::schedule_update_checks(window, cx);
 
         let id_sort = Sort {
             column: SortColumn::Id,
             ascending: true,
         };
+        let update_error = crate::updater::startup_error();
         Self {
+            update: updating::UpdateUi {
+                preview: cfg!(feature = "update-preview"),
+                status: update_error
+                    .as_ref()
+                    .map(|_| t!("update.installFailed").to_string()),
+                install_error: update_error.is_some(),
+                detail: update_error,
+                ..Default::default()
+            },
             store,
             tab: None,
             selected_profiles: HashMap::new(),
             source: None,
+            other_source: None,
+            editor_server: None,
+            editor_accounts: HashMap::new(),
+            probe_editors: HashMap::new(),
+            drone_editors: HashMap::new(),
             using_default_sources,
             targets: targets::Targets::default(),
             target_scroll: UniformListScrollHandle::new(),
@@ -291,6 +310,9 @@ impl MainView {
             entry_query: SearchQuery::default(),
             settings_panel,
             announce_refresh: false,
+            refresh_status: None,
+            #[cfg(test)]
+            reload_requests: 0,
             _dialog_subscription: None,
             _subscriptions: subscriptions,
         }
@@ -298,7 +320,7 @@ impl MainView {
 
     // Keeps the selection pointing at current data: entries are refreshed
     // (new names, portraits) and anything deleted on disk is dropped.
-    fn on_data_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_data_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(data) = self.store.read(cx).data() else {
             return;
         };
@@ -312,6 +334,10 @@ impl MainView {
                 .map(Source::Backup),
             None => None,
         };
+        self.other_source = self.other_source.take().and_then(|source| match source {
+            Source::Entry(entry) => data.find_entry(&entry.path).cloned().map(Source::Entry),
+            Source::Backup(_) => None,
+        });
         self.targets = self
             .targets
             .iter()
@@ -328,7 +354,8 @@ impl MainView {
 
         let tab_exists = match self.tab {
             Some(Tab::Server(server)) => data.servers.iter().any(|s| s.info.id == server),
-            Some(Tab::Backups) => !data.backups.is_empty(),
+            Some(Tab::Backups) => true,
+            Some(Tab::Probes | Tab::Drones) => true,
             None => false,
         };
         if !tab_exists {
@@ -337,11 +364,11 @@ impl MainView {
 
         if std::mem::take(&mut self.announce_refresh) && !data.is_empty() {
             let message = t!(
-                "toast.dataRefreshedDesc",
+                "titleBar.refreshedCounts",
                 servers = data.servers.len(),
                 backups = data.backups.len()
             );
-            ui::notify_success(t!("toast.dataRefreshed"), message, window, cx);
+            self.refresh_status = Some(message.to_string());
         }
         cx.notify();
     }
@@ -400,6 +427,7 @@ impl MainView {
 
 impl Render for MainView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let navigation_data = self.store.read(cx).data();
         let body = match self.store.read(cx).data().map(|d| d.is_empty()) {
             None => self.render_loading(cx).into_any_element(),
             Some(true) => self.render_empty(cx).into_any_element(),
@@ -408,7 +436,10 @@ impl Render for MainView {
                 .items_stretch()
                 .overflow_hidden()
                 .child(self.render_browser(window, cx))
-                .child(self.render_copy_panel(cx))
+                .when(
+                    !matches!(self.tab, Some(Tab::Probes | Tab::Drones)),
+                    |this| this.child(self.render_copy_panel(cx)),
+                )
                 .into_any_element(),
         };
 
@@ -417,6 +448,18 @@ impl Render for MainView {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(self.render_title_bar(window, cx))
+            .children(
+                navigation_data
+                    .filter(|data| !data.is_empty())
+                    .map(|data| self.render_navigation(&data, cx)),
+            )
+            .when(
+                self.store
+                    .read(cx)
+                    .data()
+                    .is_none_or(|data| data.is_empty()),
+                |this| this.child(h_flex().justify_end().child(self.render_app_controls(cx))),
+            )
             .child(body)
     }
 }
