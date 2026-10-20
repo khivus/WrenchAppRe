@@ -1071,7 +1071,7 @@ mod tests {
             window.click("drone-toggle-light", cx);
             window.click("drone-groups-next", cx);
             window.click("drone-pattern-input", cx);
-            window.press("ctrl-a", cx);
+            window.press("secondary-a", cx);
             window.input("{dps}", cx);
             window.click("drone-groups-next", cx);
             assert!(window.try_find("drone-groups-save").is_none());

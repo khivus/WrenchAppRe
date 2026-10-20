@@ -10,6 +10,7 @@ mod editors;
 mod editors_tests;
 mod entry_columns;
 mod ordering;
+mod profile_copy;
 mod profiles;
 mod scroll;
 mod search;

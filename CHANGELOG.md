@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.7.0 - 2026-10-20
+
+### Added
+
+- **Sync profile...** copies the selected profile's entire settings folder to a
+  named profile on another server or the same server, including every account,
+  character, `core_public__.yaml`, `prefs.ini` and subfolder. Empty server folders
+  are available as destinations, and **Choose folder...** supports other folders.
+- Existing destination profiles are replaced completely. With **Back up before
+  changes** enabled, their complete previous folder is retained under
+  `.eve-wrench-profile-backups` beside the server's profile folders.
+
+### Changed
+
+- Move the custom account name's pencil button to the left of the name.
+
+### Fixed
+
+- UI tests use the platform's Select All shortcut (Command+A on macOS,
+  Ctrl+A on Windows/Linux), so account-name editing, drone naming and profile
+  copying replace the existing input correctly on every CI platform.
+
 ## 0.6.0 - 2026-10-20
 
 ### Added

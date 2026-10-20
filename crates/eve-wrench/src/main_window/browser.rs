@@ -782,13 +782,6 @@ impl MainView {
             .min_w_0()
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .child(entry.alias.clone().unwrap_or_else(|| "\u{2014}".into())),
-            )
-            .child(
-                div()
                     .flex_none()
                     .opacity(0.)
                     .group_hover("entry-row", |s| s.opacity(1.))
@@ -801,6 +794,13 @@ impl MainView {
                                 this.start_alias_edit(&entry_for_edit, window, cx)
                             })),
                     ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .child(entry.alias.clone().unwrap_or_else(|| "\u{2014}".into())),
             )
             .into_any_element()
     }
@@ -1204,7 +1204,7 @@ mod tests {
                     "Alias input must have room to type"
                 );
                 window.click("alias-input", cx);
-                window.press("ctrl-a", cx);
+                window.press("secondary-a", cx);
                 window.input(typed, cx);
                 assert_eq!(
                     view.read(cx)

@@ -12,6 +12,7 @@ pub mod formations;
 pub mod locations;
 mod marshal;
 pub mod model;
+pub mod profile_copy;
 pub mod scan;
 pub mod updates;
 

@@ -152,9 +152,6 @@ fn scan_installations(root: &Path) -> Result<Vec<ServerData>, String> {
         .into_iter()
         .filter_map(|server| {
             let (path, profiles) = found.remove(&server)?;
-            if profiles.is_empty() {
-                return None;
-            }
             Some(ServerData {
                 info: ServerInfo {
                     id: server,

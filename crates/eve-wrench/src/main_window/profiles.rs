@@ -167,6 +167,17 @@ impl MainView {
                                     })
                                 }),
                         ),
+                    )
+                    .child(
+                        Button::new("profile-copy")
+                            .outline()
+                            .small()
+                            .icon(IconName::Copy)
+                            .label(t!("profiles.copy").to_string())
+                            .disabled(self.copying || profile.is_none())
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.prompt_profile_copy(server_id, window, cx);
+                            })),
                     ),
             )
     }

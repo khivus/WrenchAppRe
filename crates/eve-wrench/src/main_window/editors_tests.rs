@@ -113,6 +113,72 @@ fn setup(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<MainView>, Files) 
 }
 
 #[gpui_kit::test]
+fn whole_profile_sync_creates_a_named_profile_on_an_empty_server(cx: &mut TestAppContext) {
+    let (handle, main, files) = setup(cx);
+    let source = std::path::Path::new(&files.account).parent().unwrap();
+    let destination_server = files.dir.join("eve/c_ccp_eve_sisi_singularity");
+    std::fs::create_dir_all(&destination_server).unwrap();
+    std::fs::write(
+        source.join("core_public__.yaml"),
+        b"audio:\n  volume: 0.5\n",
+    )
+    .unwrap();
+    std::fs::write(source.join("prefs.ini"), b"languageID=EN\n").unwrap();
+    std::fs::create_dir_all(source.join("nested/empty")).unwrap();
+    std::fs::write(source.join("nested/extra.txt"), b"whole folder").unwrap();
+    cx.update(|cx| Store::global(cx).update(cx, |store, cx| store.reload(cx)));
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        let data = main.read(cx).store.read(cx).data().unwrap();
+        assert!(data.servers.iter().any(|server| {
+            server.info.id == eve_wrench_core::Server::Singularity && server.profiles.is_empty()
+        }));
+        assert!(main.read(cx).source.is_none());
+        assert!(main.read(cx).other_source.is_none());
+        window.click("profile-copy", cx);
+        window.render_frame(cx);
+        assert_ne!(window.find("profile-copy-apply").disabled(), Some(true));
+        window.click("profile-copy-name", cx);
+        window.press("secondary-a", cx);
+        window.input("My copied setup", cx);
+        window.click("profile-copy-apply", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let destination = destination_server.join("settings_My copied setup");
+    for name in [
+        "core_user_2.dat",
+        "core_user_10.dat",
+        "core_char_3.dat",
+        "core_char_4.dat",
+        "core_public__.yaml",
+        "prefs.ini",
+        "nested/extra.txt",
+    ] {
+        assert_eq!(
+            std::fs::read(destination.join(name)).unwrap(),
+            std::fs::read(source.join(name)).unwrap()
+        );
+    }
+    assert!(destination.join("nested/empty").is_dir());
+    cx.update_window(handle, |_, window, cx| {
+        assert!(!main.read(cx).copying);
+        let data = main.read(cx).store.read(cx).data().unwrap();
+        let server = data
+            .servers
+            .iter()
+            .find(|s| s.info.id == eve_wrench_core::Server::Singularity)
+            .unwrap();
+        assert_eq!(server.profiles[0].name, "My copied setup");
+        assert_eq!(server.profiles[0].accounts.len(), 2);
+        assert_eq!(server.profiles[0].characters.len(), 2);
+        window.render_frame(cx);
+        assert!(window.try_find("profile-copy-apply").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
 fn update_indicator_is_compact_and_preview_never_opens_a_modal(cx: &mut TestAppContext) {
     let (handle, main, _files) = setup(cx);
     cx.update_window(handle, |_, window, cx| {
@@ -239,7 +305,7 @@ fn drone_save_prompts_for_append_or_replace_then_sync(cx: &mut TestAppContext) {
         window.click("drone-tile-hobgoblin", cx);
         window.click("drone-groups-next", cx);
         window.click("drone-pattern-input", cx);
-        window.press("ctrl-a", cx);
+        window.press("secondary-a", cx);
         window.input("{type_short} | {name}", cx);
         window.click("drone-groups-next", cx);
         window.click("drone-groups-save", cx);

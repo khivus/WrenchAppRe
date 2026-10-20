@@ -70,6 +70,20 @@ character's hand-arranged module slots or typed search history. Only the groups
 you select are touched; caches, per-station state, and edit history never
 migrate, and every target is backed up first.
 
+**Whole profiles.** Use **Sync profile...** beside the profile selector to copy
+all accounts and characters together to a named profile on another server or
+the same server. This copies the entire `settings_<name>` folder unchanged,
+including `core_public__.yaml`, `prefs.ini` and subfolders. No existing account
+or character files are required in the destination; **Choose folder...** also
+lets you select an empty server folder outside the detected list.
+
+An existing destination profile is replaced completely, including files that
+only existed there. Close EVE before copying. If **Back up before changes** is
+enabled, the entire previous folder is kept in `.eve-wrench-profile-backups`
+beside the server's profile folders, with its exact path shown after copying.
+These folder backups are separate from the Backups tab; restore one by copying
+it back as the desired `settings_<name>` folder while EVE is closed.
+
 **Account groups**
 
 | Group                        | What it copies                                                                             |
