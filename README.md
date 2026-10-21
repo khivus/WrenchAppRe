@@ -1,4 +1,4 @@
-<h1 align="center">EVE Wrench</h1>
+<h1 align="center">EVE Wrench Re</h1>
 
 <p align="center">
   <strong>A settings manager for EVE Online</strong><br>
@@ -14,9 +14,7 @@
 
 ---
 
-This is [khivus's fork](https://github.com/khivus/WrenchAppRe) of
-[EVE Wrench](https://github.com/eve-wrench/eve-wrench-app), based on upstream
-0.4.0, with drone group presets imported from upstream commit `570cf45`.
+This is fork of [EVE Wrench](https://github.com/eve-wrench/eve-wrench-app).
 Fork releases continue with standard semantic versions, starting at
 **0.4.1**. See [CHANGELOG.md](CHANGELOG.md) for the changes. Update checks use
 this fork's releases only.
