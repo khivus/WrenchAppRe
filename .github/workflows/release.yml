@@ -204,16 +204,7 @@ jobs:
           name="eve-wrench_${{ steps.version.outputs.version }}_x86_64-linux"
           mkdir -p "$name/icons"
           cp "target/${{ matrix.target }}/release/eve-wrench" "$name/"
-          cat > "$name/eve-wrench.desktop" <<'DESKTOP'
-          [Desktop Entry]
-          Type=Application
-          Name=EVE Wrench
-          Comment=EVE Online Settings Manager - Backup, restore, and sync settings
-          Exec=eve-wrench
-          Icon=eve-wrench
-          Categories=Utility;
-          Terminal=false
-          DESKTOP
+          cp packaging/linux/eve-wrench.desktop "$name/"
           cp assets/icons/32x32.png assets/icons/128x128.png "$name/icons/"
           cp assets/icons/128x128@2x.png "$name/icons/256x256.png"
           cp assets/icons/icon.svg "$name/icons/eve-wrench.svg"

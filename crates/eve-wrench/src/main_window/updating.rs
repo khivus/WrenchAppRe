@@ -64,6 +64,9 @@ impl MainView {
             let result = cx
                 .background_spawn(async { updates::check_for_update() })
                 .await;
+            if let Err(error) = &result {
+                log::warn!("Update check failed: {error}");
+            }
             this.update_in(cx, |main, _, cx| {
                 main.update.checking = false;
                 match result {

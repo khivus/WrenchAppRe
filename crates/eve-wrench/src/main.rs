@@ -2,6 +2,7 @@
 
 mod assets;
 mod formation_editor;
+mod logging;
 mod main_window;
 mod store;
 mod table;
@@ -23,6 +24,8 @@ fn main() {
     if updater::handle_helper_mode() {
         return;
     }
+    logging::init();
+
     gpui_kit::application()
         .with_assets(assets::AppAssets)
         .run(|cx| {

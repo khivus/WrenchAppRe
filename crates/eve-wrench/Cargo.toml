@@ -13,6 +13,8 @@ serde_json.workspace = true
 dirs.workspace = true
 gpui-kit = "0.7"
 rust-i18n = "4"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color"] }
+log = "0.4"
 
 [features]
 update-preview = []

@@ -254,6 +254,18 @@ Choose the package for your system:
 
 **SHA256SUMS.txt** contains checksums for all release downloads.
 
+On Arch-based distros, build a package from the bundled PKGBUILD:
+
+```bash
+git clone https://github.com/khivus/WrenchAppRe.git
+cd WrenchAppRe/packaging/aur
+makepkg -si
+```
+
+If the app doesn't start, run it from a terminal with `RUST_LOG=debug` and include
+the output in your issue. The same log is written to `eve-wrench.log` in the data
+folder (`~/.local/share/com.timkunze.eve-wrench/` on Linux).
+
 ## Quick start
 
 1. **Launch**: EVE Wrench scans for installations and lists every account and character

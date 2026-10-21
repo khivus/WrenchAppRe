@@ -259,7 +259,9 @@ impl MainView {
             let data_dir = store.read(cx).locations().data_dir().to_path_buf();
             cx.background_spawn(async move {
                 eve_wrench_core::drone_groups::load_cached_catalog(&data_dir);
-                let _ = eve_wrench_core::drone_groups::refresh_catalog(&data_dir);
+                if let Err(e) = eve_wrench_core::drone_groups::refresh_catalog(&data_dir) {
+                    log::warn!("Drone catalog refresh failed: {e}");
+                }
             })
             .detach();
         }
