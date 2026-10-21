@@ -2,9 +2,18 @@ name: "Release"
 
 on:
   workflow_dispatch:
+    inputs:
+      release_ref:
+        description: "Source tag or commit to package (empty uses the selected branch)"
+        required: false
+        type: string
   push:
     branches:
       - release
+
+concurrency:
+  group: release-${{ inputs.release_ref || github.ref }}
+  cancel-in-progress: false
 
 jobs:
   # Build the "What's Changed" notes from conventional commits since the last
@@ -17,6 +26,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.release_ref || github.sha }}
 
       - name: Generate changelog
         id: cliff
@@ -66,6 +76,8 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref || github.sha }}
 
       - name: Install dependencies (Ubuntu only)
         if: startsWith(matrix.platform, 'ubuntu')
@@ -134,7 +146,7 @@ jobs:
           if ! gh release view "$tag" > /dev/null 2>&1; then
             flags=(--draft --title "EVE Wrench $tag" --notes "$NOTES")
             if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then flags+=(--prerelease); fi
-            gh release create "$tag" "${flags[@]}" || gh release view "$tag" > /dev/null
+            gh release create "$tag" --target "$(git rev-parse HEAD)" "${flags[@]}" || gh release view "$tag" > /dev/null
           fi
 
       - name: Upload packages
@@ -172,6 +184,41 @@ jobs:
           dest="EVE-Wrench_${{ steps.version.outputs.version }}_x64-portable.exe"
           cp "target/${{ matrix.target }}/release/eve-wrench.exe" "$dest"
           gh release upload "v${{ steps.version.outputs.version }}" "$dest" --clobber
+
+      - name: Upload macOS app archive
+        if: startsWith(matrix.platform, 'macos')
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          name="EVE-Wrench_${{ steps.version.outputs.version }}_${{ matrix.target }}.app.tar.gz"
+          tar -czf "$name" -C dist "EVE Wrench.app"
+          gh release upload "v${{ steps.version.outputs.version }}" "$name" --clobber
+
+      - name: Upload Linux tarball
+        if: startsWith(matrix.platform, 'ubuntu')
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          name="eve-wrench_${{ steps.version.outputs.version }}_x86_64-linux"
+          mkdir -p "$name/icons"
+          cp "target/${{ matrix.target }}/release/eve-wrench" "$name/"
+          cat > "$name/eve-wrench.desktop" <<'DESKTOP'
+          [Desktop Entry]
+          Type=Application
+          Name=EVE Wrench
+          Comment=EVE Online Settings Manager - Backup, restore, and sync settings
+          Exec=eve-wrench
+          Icon=eve-wrench
+          Categories=Utility;
+          Terminal=false
+          DESKTOP
+          cp assets/icons/32x32.png assets/icons/128x128.png "$name/icons/"
+          cp assets/icons/128x128@2x.png "$name/icons/256x256.png"
+          cp assets/icons/icon.svg "$name/icons/eve-wrench.svg"
+          tar -czf "$name.tar.gz" "$name"
+          gh release upload "v${{ steps.version.outputs.version }}" "$name.tar.gz" --clobber
 
       - name: Upload update bundle
         if: ${{ vars.UPDATER_PUBKEY != '' }}
@@ -231,6 +278,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref || github.sha }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -259,3 +308,38 @@ jobs:
           }, indent=2))
           PY
           gh release upload "v$version" latest.json --clobber
+
+  checksums:
+    needs: [publish, updater-manifest]
+    if: ${{ always() && needs.publish.result == 'success' && (needs.updater-manifest.result == 'success' || needs.updater-manifest.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref || github.sha }}
+
+      - name: Publish checksums for all release assets
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          gh release download "v$version" --dir release-assets --pattern '*'
+          cd release-assets
+          rm -f SHA256SUMS.txt
+          for name in \
+            "EVE-Wrench_${version}_aarch64-apple-darwin.dmg" \
+            "EVE-Wrench_${version}_aarch64-apple-darwin.app.tar.gz" \
+            "EVE-Wrench_${version}_x86_64-apple-darwin.dmg" \
+            "EVE-Wrench_${version}_x86_64-apple-darwin.app.tar.gz" \
+            "EVE-Wrench_${version}_x64-portable.exe" \
+            "eve-wrench_${version}_x64-setup.exe" \
+            "eve-wrench_${version}_amd64.deb" \
+            "eve-wrench_${version}_x86_64.AppImage" \
+            "eve-wrench_${version}_x86_64-linux.tar.gz"; do
+            test -s "$name" || { echo "::error::Missing release asset: $name"; exit 1; }
+          done
+          sha256sum -- * > SHA256SUMS.txt
+          gh release upload "v$version" SHA256SUMS.txt --clobber

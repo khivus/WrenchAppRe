@@ -243,10 +243,16 @@ automatically.
 
 Grab the latest fork build from [**Releases**](https://github.com/khivus/WrenchAppRe/releases).
 
-Version **0.6.0** provides **EVE-Wrench_0.6.0_x64-portable.exe** for Windows x64.
-Download and run it directly; no installation is needed. The release also includes
-SHA-256 checksums. macOS and Linux source support and packaging workflows are
-retained from upstream, but this fork release does not include builds for them.
+Choose the package for your system:
+
+| System | Downloads |
+| --- | --- |
+| Windows x64 | Portable `.exe` (run directly) or `x64-setup.exe` installer |
+| macOS Apple Silicon | `aarch64-apple-darwin.dmg` or `.app.tar.gz` |
+| macOS Intel | `x86_64-apple-darwin.dmg` or `.app.tar.gz` |
+| Linux x64 | `.deb`, `.AppImage`, or `x86_64-linux.tar.gz` |
+
+**SHA256SUMS.txt** contains checksums for all release downloads.
 
 ## Quick start
 
