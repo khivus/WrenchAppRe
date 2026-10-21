@@ -19,7 +19,7 @@ Fork releases continue with standard semantic versions, starting at
 **0.4.1**. See [CHANGELOG.md](CHANGELOG.md) for the changes. Update checks use
 this fork's releases only.
 
-<img width="1904" height="1021" alt="eve-wrench-demo" src="https://github.com/user-attachments/assets/83479f1b-ae8e-4348-93ee-5eb28de5ae72" />
+<img width="1440" height="800" alt="image" src="https://github.com/user-attachments/assets/8d8886f2-8a9c-4193-aa53-71ceea77b618" />
 
 ## What it does
 
