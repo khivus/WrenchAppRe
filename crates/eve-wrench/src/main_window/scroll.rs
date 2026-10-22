@@ -83,31 +83,53 @@ impl Default for TableScroll {
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum TableKind {
+    Accounts,
+    Characters,
+    Backups,
+}
+
+impl From<SettingsKind> for TableKind {
+    fn from(kind: SettingsKind) -> Self {
+        match kind {
+            SettingsKind::User => Self::Accounts,
+            SettingsKind::Char => Self::Characters,
+        }
+    }
+}
+
 impl MainView {
     pub(super) fn reset_browser_scroll(&mut self) {
-        for scroll in [&mut self.account_scroll, &mut self.character_scroll] {
+        for scroll in [
+            &mut self.account_scroll,
+            &mut self.character_scroll,
+            &mut self.backup_scroll,
+        ] {
             scroll.motion.cancel();
             scroll.handle.set_offset(point(px(0.), px(0.)));
         }
     }
 
-    pub(super) fn table_scroll(&self, kind: SettingsKind) -> &TableScroll {
+    pub(super) fn table_scroll(&self, kind: TableKind) -> &TableScroll {
         match kind {
-            SettingsKind::User => &self.account_scroll,
-            SettingsKind::Char => &self.character_scroll,
+            TableKind::Accounts => &self.account_scroll,
+            TableKind::Characters => &self.character_scroll,
+            TableKind::Backups => &self.backup_scroll,
         }
     }
 
-    fn table_scroll_mut(&mut self, kind: SettingsKind) -> &mut TableScroll {
+    fn table_scroll_mut(&mut self, kind: TableKind) -> &mut TableScroll {
         match kind {
-            SettingsKind::User => &mut self.account_scroll,
-            SettingsKind::Char => &mut self.character_scroll,
+            TableKind::Accounts => &mut self.account_scroll,
+            TableKind::Characters => &mut self.character_scroll,
+            TableKind::Backups => &mut self.backup_scroll,
         }
     }
 
-    pub(super) fn browser_wheel_layer(
+    pub(super) fn table_wheel_layer(
         &self,
-        kind: SettingsKind,
+        kind: TableKind,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let scroll = self.table_scroll(kind).handle.clone();
@@ -163,7 +185,7 @@ impl MainView {
 
     fn schedule_browser_frame(
         &mut self,
-        kind: SettingsKind,
+        kind: TableKind,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -192,11 +214,12 @@ impl MainView {
 
 #[cfg(test)]
 mod tests {
-    use super::super::MainView;
+    use super::super::{MainView, Tab};
     use super::{WheelMotion, visible_rows};
     use crate::store::Store;
     use eve_wrench_core::{
-        AppData, ProfileData, Server, ServerData, ServerInfo, SettingsEntry, SettingsKind,
+        AppData, BackupEntry, ProfileData, Server, ServerData, ServerInfo, SettingsEntry,
+        SettingsKind,
     };
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{
@@ -369,6 +392,97 @@ mod tests {
                 view.read(cx).character_scroll.handle.offset().y,
                 char_offset
             );
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn backups_use_smooth_wheel_scrolling_and_a_draggable_scrollbar(cx: &mut TestAppContext) {
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            let mut data = super::super::profiles::tests::sample_data();
+            data.backups = (0..300)
+                .map(|index| BackupEntry {
+                    id: index.to_string(),
+                    name: format!("Backup {index}"),
+                    path: format!("/test/backup_{index}.bak"),
+                    timestamp: index,
+                    kind: SettingsKind::User,
+                    original_id: "1".into(),
+                    original_name: None,
+                })
+                .collect();
+            Store::install_for_test(data, cx);
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: point(px(0.), px(0.)),
+                        size: size(px(1200.), px(700.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| MainView::new(window, cx)),
+            )
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("tab-backups", cx);
+            window.render_frame(cx);
+            let bounds = view.read(cx).backup_scroll.handle.bounds();
+            assert!(bounds.size.height > px(0.));
+            assert!(view.read(cx).backup_scroll.handle.max_offset().y > px(0.));
+            let position = bounds.center();
+            window.dispatch_event(
+                PlatformInput::MouseMove(MouseMoveEvent {
+                    position,
+                    ..Default::default()
+                }),
+                cx,
+            );
+            window.dispatch_event(
+                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                    position,
+                    delta: ScrollDelta::Lines(point(0., -3.)),
+                    ..Default::default()
+                }),
+                cx,
+            );
+            assert!(view.read(cx).backup_scroll.frame_pending);
+            assert_eq!(view.read(cx).backup_scroll.handle.offset().y, px(0.));
+            for frame in 0..30 {
+                view.update(cx, |view, _| {
+                    view.backup_scroll.last_frame =
+                        std::time::Instant::now() - std::time::Duration::from_millis(16);
+                });
+                window.simulate_next_frame(cx);
+                window.render_frame(cx);
+                if frame == 0 {
+                    let offset = view.read(cx).backup_scroll.handle.offset().y;
+                    assert!(offset < px(0.) && offset > px(-30.));
+                }
+            }
+            assert_eq!(view.read(cx).backup_scroll.handle.offset().y, px(-30.));
+            assert!(!view.read(cx).backup_scroll.frame_pending);
+            assert_eq!(view.read(cx).account_scroll.handle.offset().y, px(0.));
+            assert_eq!(view.read(cx).character_scroll.handle.offset().y, px(0.));
+
+            view.update(cx, |view, _| view.reset_browser_scroll());
+            window.render_frame(cx);
+            let from = point(bounds.right() - px(7.), bounds.top() + px(10.));
+            window.drag(from, from + point(px(0.), px(100.)), cx);
+            window.render_frame(cx);
+            assert!(view.read(cx).backup_scroll.handle.offset().y < px(-30.));
+
+            // A tab change resets the backup viewport, just like the main tables.
+            window.click(
+                gpui_kit::SharedString::from(format!("tab-{}", Server::Tranquility.id())),
+                cx,
+            );
+            window.render_frame(cx);
+            assert!(view.read(cx).tab == Some(Tab::Server(Server::Tranquility)));
+            assert_eq!(view.read(cx).backup_scroll.handle.offset().y, px(0.));
         })
         .unwrap();
     }

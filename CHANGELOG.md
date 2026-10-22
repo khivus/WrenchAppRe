@@ -2,15 +2,25 @@
 
 ## Unreleased
 
+## 0.7.1 - 2026-10-22
+
 ### Changed
 
+- Rename the light drone naming tokens from Small/Sml to Light/Lgt and update
+  the naming help. Previously saved Small/Sml groups remain recognizable.
 - Merge upstream history through `2de3d80`, retaining the fork's features,
-  version 0.7.0, release packaging, and fork-only portable updater.
+  release packaging, and fork-only portable updater.
 - Update the bundled drone catalog to SDE build 3632936 and allow the catalog
   workflow to recover when a previous run pushed a branch without opening a PR.
 - Add file logging for startup, UI errors, catalog refreshes, and update checks.
 - Include upstream's Linux desktop entry and Arch package recipe, with the
   recipe downloading this fork's releases.
+
+### Fixed
+
+- Add a draggable scrollbar and smooth wheel scrolling to the Backups view,
+  matching the main tables. The header stays fixed and only visible rows are
+  rendered for long backup histories.
 
 ## 0.7.0 - 2026-10-20
 

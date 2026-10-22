@@ -341,8 +341,8 @@ droneGroups:
   optionalHint: "Text in [brackets] is left out when the drone has no such value, like speed for sentries."
   tokens:
     name: "Drone family, e.g. Hobgoblin"
-    type: "Size/type: Small, Medium, Heavy, Sentry, Logistic, etc."
-    type_short: "Short size/type: Sml, Med, Hev, Sen, Logi, etc."
+    type: "Size/type: Light, Medium, Heavy, Sentry, Logistic, etc."
+    type_short: "Short size/type: Lgt, Med, Hev, Sen, Logi, etc."
     damage: "Damage type"
     dps: "DPS of a full flight"
     speed: "Max speed (not for sentries)"

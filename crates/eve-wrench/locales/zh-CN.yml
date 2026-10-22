@@ -341,8 +341,8 @@ droneGroups:
   optionalHint: "无人机缺少某项数值时（例如哨戒无人机没有速度），[方括号] 中的内容会被省略。"
   tokens:
     name: "无人机系列，例如 Hobgoblin"
-    type: "尺寸/类型：Small、Medium、Heavy、Sentry、Logistic 等"
-    type_short: "尺寸/类型缩写：Sml、Med、Hev、Sen、Logi 等"
+    type: "尺寸/类型：Light、Medium、Heavy、Sentry、Logistic 等"
+    type_short: "尺寸/类型缩写：Lgt、Med、Hev、Sen、Logi 等"
     damage: "伤害类型"
     dps: "一整组无人机的 DPS"
     speed: "最大速度（哨戒无人机除外）"

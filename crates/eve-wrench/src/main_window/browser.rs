@@ -1,4 +1,3 @@
-use std::ops::Range;
 use std::rc::Rc;
 
 use eve_wrench_core::{
@@ -17,7 +16,7 @@ use rust_i18n::t;
 
 use super::entry_columns::{EntryTableLayout, column_id, column_label, entry_column_text};
 use super::ordering::compare_entries;
-use super::scroll::visible_rows;
+use super::scroll::{TableKind, visible_rows};
 use super::title_bar::view_action;
 use super::{DragPreview, DraggedSettings, MainView, Sort, SortColumn, Source, Tab};
 use crate::table::{self, Column};
@@ -108,7 +107,7 @@ impl MainView {
                 .iter()
                 .find(|s| s.info.id == server)
                 .map(|s| self.render_server(s, &data, window, cx)),
-            Some(Tab::Backups) => Some(self.render_backups(&data, cx).into_any_element()),
+            Some(Tab::Backups) => Some(self.render_backups(&data, window, cx).into_any_element()),
             Some(tab @ (Tab::Probes | Tab::Drones)) => {
                 Some(self.render_editor(tab, &data, window, cx))
             }
@@ -385,7 +384,7 @@ impl MainView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let scroll = self.table_scroll(kind).handle.clone();
+        let scroll = self.table_scroll(kind.into()).handle.clone();
         let layout = EntryTableLayout::new(kind, self.store.read(cx).config().character_columns);
         let viewport = scroll
             .bounds()
@@ -477,7 +476,7 @@ impl MainView {
                             .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
                             .child(content),
                     )
-                    .child(self.browser_wheel_layer(kind, cx))
+                    .child(self.table_wheel_layer(kind.into(), cx))
                     .child(
                         Scrollbar::new(&scroll)
                             .id(match kind {
@@ -893,6 +892,7 @@ impl MainView {
     fn render_backups(
         &self,
         data: &Rc<AppData>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let sort = self.backup_sort;
@@ -973,32 +973,62 @@ impl MainView {
             ))
             .child(table::cell(&BACKUP_COLUMNS[4], table::empty()));
 
-        // Virtualized: only visible rows are built, so long backup histories stay cheap
-        v_flex().flex_1().min_h_0().child(header).child(
-            uniform_list(
-                "backups",
-                data.backups.len(),
-                cx.processor(|this, range: Range<usize>, _, cx| this.render_backup_rows(range, cx)),
-            )
-            .flex_1(),
-        )
-    }
-
-    fn render_backup_rows(
-        &mut self,
-        range: Range<usize>,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        let Some(data) = self.store.read(cx).data() else {
-            return Vec::new();
-        };
-        let backups = self.sorted_backups(&data);
-        backups
-            .get(range)
-            .unwrap_or_default()
+        let scroll = self.backup_scroll.handle.clone();
+        let viewport = scroll
+            .bounds()
+            .size
+            .height
+            .max(window.viewport_size().height);
+        let backups = self.sorted_backups(data);
+        let range = visible_rows(
+            backups.len(),
+            0.,
+            -scroll.offset().y.as_f32(),
+            viewport.as_f32(),
+            ui::ROW_HEIGHT.as_f32(),
+        );
+        let rows: Vec<_> = backups[range.clone()]
             .iter()
-            .map(|backup| self.render_backup_row(backup, &data, cx))
-            .collect()
+            .map(|backup| self.render_backup_row(backup, data, cx))
+            .collect();
+        let content = v_flex()
+            .w_full()
+            .pr_4()
+            .pb_4()
+            .child(div().h(ui::ROW_HEIGHT * range.start as f32).flex_none())
+            .children(rows)
+            .child(
+                div()
+                    .h(ui::ROW_HEIGHT * (backups.len() - range.end) as f32)
+                    .flex_none(),
+            );
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .overflow_hidden()
+            .child(header.pr_8())
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .id("backups")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&scroll)
+                            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
+                            .child(content),
+                    )
+                    .child(self.table_wheel_layer(TableKind::Backups, cx))
+                    .child(
+                        Scrollbar::vertical(&scroll)
+                            .id("backups-scrollbar")
+                            .mode(ScrollbarMode::Always),
+                    ),
+            )
     }
 
     fn render_backup_row(

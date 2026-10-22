@@ -70,7 +70,7 @@ pub enum DroneCategory {
 impl DroneCategory {
     fn naming_type(self) -> (&'static str, &'static str) {
         match self {
-            Self::Light => ("Small", "Sml"),
+            Self::Light => ("Light", "Lgt"),
             Self::Medium => ("Medium", "Med"),
             Self::Heavy => ("Heavy", "Hev"),
             Self::Sentry => ("Sentry", "Sen"),
@@ -487,9 +487,9 @@ pub(crate) fn preserve_assignments(root: &mut Value, target: &Value) -> Result<(
 }
 
 // The longest whole family or drone name anywhere in the label:
-// "Sml | Hobgoblin" is the Hobgoblin family, "EWAR | Hobgoblin SD-300" the
+// "Lgt | Hobgoblin" is the Hobgoblin family, "EWAR | Hobgoblin SD-300" the
 // light sensor damp group. Boundaries prevent "Hobgoblins" matching Hobgoblin.
-// Known token values may touch the name, as in "SmlHobgoblin".
+// Known token values may touch the name, as in "LgtHobgoblin".
 fn name_boundary(mut context: &str, tokens: &[String], before: bool) -> bool {
     loop {
         let adjacent = if before {
@@ -538,6 +538,10 @@ fn matching_preset<'a>(
                     .collect();
                 // Recognize groups saved before short types were capitalized.
                 tokens.push(preset.category.naming_type().1.to_ascii_lowercase());
+                // Recognize light groups saved under the former Small/Sml names.
+                if preset.category == DroneCategory::Light {
+                    tokens.extend(["Small", "Sml", "sml"].map(str::to_string));
+                }
                 name_boundary(&label[..start], &tokens, true)
                     && name_boundary(&label[start + name.len()..], &tokens, false)
             })
@@ -1026,7 +1030,7 @@ mod tests {
         assert_eq!(validate_pattern(pattern), Ok(()));
         let catalog = catalog();
         for (name, full, short) in [
-            ("Hobgoblin", "Small", "Sml"),
+            ("Hobgoblin", "Light", "Lgt"),
             ("Hammerhead", "Medium", "Med"),
             ("Ogre", "Heavy", "Hev"),
             ("Garde", "Sentry", "Sen"),
@@ -1085,6 +1089,10 @@ mod tests {
         assert_eq!(id("Hobgoblin"), Some("hobgoblin"));
         assert_eq!(id("Federation Navy Hobgoblin"), Some("hobgoblin"));
         assert_eq!(id("Hobgoblin SD-300"), Some("light-sensor-damp"));
+        assert_eq!(id("LgtHobgoblin"), Some("hobgoblin"));
+        assert_eq!(id("lgtHobgoblin"), Some("hobgoblin"));
+        assert_eq!(id("LightHobgoblin"), Some("hobgoblin"));
+        assert_eq!(id("SmallHobgoblin"), Some("hobgoblin"));
         assert_eq!(id("sml | Hobgoblin | 99dps"), Some("hobgoblin"));
         assert_eq!(id("SmlHobgoblin"), Some("hobgoblin"));
         assert_eq!(id("smlHobgoblin"), Some("hobgoblin"));
