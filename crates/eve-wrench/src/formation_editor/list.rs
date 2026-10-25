@@ -208,21 +208,25 @@ impl FormationEditor {
                     .child(add_menu),
             )
             .child(
-                v_flex()
-                    .id("formation-list")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .when(self.formations.is_empty(), |this| {
-                        this.child(
-                            div()
-                                .px_4()
-                                .py_3()
-                                .text_xs()
-                                .text_color(muted)
-                                .child(t!("formationEditor.noFormations").to_string()),
-                        )
-                    })
-                    .children(rows),
+                self.list_scroll
+                    .view(
+                        "formation-list",
+                        v_flex()
+                            .when(self.formations.is_empty(), |this| {
+                                this.child(
+                                    div()
+                                        .px_4()
+                                        .py_3()
+                                        .text_xs()
+                                        .text_color(muted)
+                                        .child(t!("formationEditor.noFormations").to_string()),
+                                )
+                            })
+                            .children(rows),
+                        |this| &mut this.list_scroll,
+                        cx,
+                    )
+                    .flex_1(),
             )
     }
 }

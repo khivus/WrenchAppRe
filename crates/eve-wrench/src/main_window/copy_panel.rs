@@ -268,6 +268,10 @@ impl MainView {
                         Self::empty_hint(t!("copyPanel.noTargetsSelected").to_string(), cx)
                             .into_any_element()
                     })
+                    .child(
+                        self.target_motion
+                            .wheel_layer(|this| &mut this.target_motion, cx),
+                    )
                     .when(has_targets, |this| {
                         this.child(
                             Scrollbar::vertical(&self.target_scroll)
@@ -391,12 +395,14 @@ impl MainView {
                 .border_t_1(),
             )
             .child(
-                v_flex()
-                    .id("copy-groups")
-                    .max_h(px(220.))
-                    .overflow_y_scroll()
-                    .py_1()
-                    .children(groups),
+                self.copy_options_scroll
+                    .view(
+                        "copy-groups",
+                        v_flex().py_1().children(groups),
+                        |this| &mut this.copy_options_scroll,
+                        cx,
+                    )
+                    .max_h(px(220.)),
             )
             .child(
                 div()
@@ -420,6 +426,65 @@ mod tests {
         AppContext, Bounds, ScrollDelta, ScrollStrategy, SharedString, TestAppContext,
         WindowBounds, WindowOptions, point, px, size,
     };
+
+    #[gpui_kit::test]
+    fn copy_options_and_targets_scroll_smoothly_and_independently(cx: &mut TestAppContext) {
+        let data = sample_data();
+        let account = data.servers[0].profiles[1].accounts[0].clone();
+        let character = data.servers[0].profiles[1].characters[0].clone();
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            Store::install_for_test(data, cx);
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: point(px(0.), px(0.)),
+                        size: size(px(1440.), px(900.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| MainView::new(window, cx)),
+            )
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.set_source(Source::Entry(account.clone()), cx);
+                view.set_source(Source::Entry(character), cx);
+                for index in 0..300 {
+                    let mut target = account.clone();
+                    target.path = format!("/test/target-{index}.dat");
+                    view.targets.push(target);
+                }
+            });
+            window.render_frame(cx);
+            crate::scrolling::tests::check_vertical(
+                &view,
+                |view| &mut view.copy_options_scroll,
+                window,
+                cx,
+            );
+            assert_eq!(
+                view.read(cx)
+                    .target_scroll
+                    .0
+                    .borrow()
+                    .base_handle
+                    .offset()
+                    .y,
+                px(0.)
+            );
+            crate::scrolling::tests::check_vertical(
+                &view,
+                |view| &mut view.target_motion,
+                window,
+                cx,
+            );
+            assert_eq!(view.read(cx).copy_options_scroll.handle.offset().y, px(0.));
+        })
+        .unwrap();
+    }
 
     #[gpui_kit::test]
     fn four_hundred_targets_only_build_visible_rows_and_toolbar_is_below_defaults(

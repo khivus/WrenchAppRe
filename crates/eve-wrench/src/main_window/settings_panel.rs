@@ -18,6 +18,7 @@ use crate::ui::{self, StyleExt as _};
 pub struct SettingsPanel {
     store: Entity<Store>,
     main: WeakEntity<MainView>,
+    scroll: crate::scrolling::SmoothScroll,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -31,6 +32,7 @@ impl SettingsPanel {
         Self {
             store,
             main,
+            scroll: crate::scrolling::SmoothScroll::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -84,12 +86,7 @@ impl Render for SettingsPanel {
             version = format!("{} · {}", version, t!("titleBar.preview"));
         }
 
-        v_flex()
-            .id("settings-panel")
-            .test_support()
-            .w(px(320.))
-            .max_h((window.viewport_size().height - px(80.)).max(px(160.)))
-            .overflow_y_scroll()
+        let content = v_flex()
             .text_sm()
             .child(Self::section(t!("settings.appearance").to_string(), cx))
             .child(
@@ -272,7 +269,11 @@ impl Render for SettingsPanel {
                                 this.check_for_updates(true, window, cx)
                             })),
                     ),
-            )
+            );
+        self.scroll
+            .view("settings-panel", content, |this| &mut this.scroll, cx)
+            .w(px(320.))
+            .max_h((window.viewport_size().height - px(80.)).max(px(160.)))
     }
 }
 
@@ -289,7 +290,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn cogwheel_theme_switch_changes_palette_both_ways_and_saves(cx: &mut TestAppContext) {
-        let (handle, _) = cx.update(|cx| {
+        let (handle, main) = cx.update(|cx| {
             gpui_kit::init(cx);
             Store::install_for_test(sample_data(), cx);
             Theme::change(ThemeMode::Light, None, cx);
@@ -297,7 +298,7 @@ mod tests {
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(Bounds {
                         origin: point(px(0.), px(0.)),
-                        size: size(px(1200.), px(700.)),
+                        size: size(px(1200.), px(420.)),
                     })),
                     ..Default::default()
                 },
@@ -311,6 +312,8 @@ mod tests {
             let light_background = cx.theme().background;
             window.click("settings-trigger", cx);
             window.render_frame(cx);
+            let panel = main.read(cx).settings_panel.clone();
+            crate::scrolling::tests::check_vertical(&panel, |panel| &mut panel.scroll, window, cx);
             assert!(window.find("theme-switch").visible());
             assert!(window.find("settings-panel").bounds().size.height <= px(620.));
             window.click("theme-switch", cx);

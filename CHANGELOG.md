@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.8.0 - 2026-10-25
+
+### Changed
+
+- Add visible, draggable scrollbars and smooth mouse-wheel scrolling to drone
+  groups, copy options and targets, probe editor panes, settings, import and
+  sync lists, and the navigation tabs.
+- Add optional numbered drone group names, defaulting to the same category order
+  as group selection, with up/down controls to customize and save the order and
+  a button to restore it. The new **Update names & add missing** save mode keeps
+  existing drone assignments, custom groups, and ship favorites.
+- Remove the daily GitHub Actions drone catalog update workflow. Existing drone
+  presets and the app's runtime catalog loading continue to work.
+
 ## 0.7.1 - 2026-10-22
 
 ### Changed

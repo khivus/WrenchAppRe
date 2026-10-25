@@ -124,6 +124,7 @@ impl MainView {
             analysis,
             path,
             main: view,
+            scroll: crate::scrolling::SmoothScroll::default(),
         });
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
@@ -147,6 +148,7 @@ fn dialog_buttons(ok_label: String) -> DialogFooter {
 }
 
 struct ImportDialog {
+    scroll: crate::scrolling::SmoothScroll,
     analysis: ImportAnalysis,
     path: PathBuf,
     selected: HashSet<String>,
@@ -277,41 +279,45 @@ impl Render for ImportDialog {
                     .child(t!("importDialog.foundFiles", count = analysis.total_files).to_string()),
             )
             .child(
-                v_flex()
-                    .id("import-files")
-                    .max_h_80()
-                    .overflow_y_scroll()
-                    .gap_4()
-                    .when(!analysis.new_files.is_empty(), |this| {
-                        this.child(self.render_section(
-                            IconName::FilePlus,
-                            crate::ui::emerald(),
-                            t!("importDialog.newFiles").to_string(),
-                            &analysis.new_files,
-                            false,
-                            cx,
-                        ))
-                    })
-                    .when(!analysis.conflicts.is_empty(), |this| {
-                        this.child(self.render_section(
-                            IconName::TriangleAlert,
-                            crate::ui::amber(cx),
-                            t!("importDialog.conflicts").to_string(),
-                            &analysis.conflicts,
-                            true,
-                            cx,
-                        ))
-                    })
-                    .when(!analysis.unchanged.is_empty(), |this| {
-                        this.child(self.render_section(
-                            IconName::CircleCheck,
-                            muted_foreground,
-                            t!("importDialog.unchanged").to_string(),
-                            &analysis.unchanged,
-                            false,
-                            cx,
-                        ))
-                    }),
+                self.scroll
+                    .view(
+                        "import-files",
+                        v_flex()
+                            .gap_4()
+                            .when(!analysis.new_files.is_empty(), |this| {
+                                this.child(self.render_section(
+                                    IconName::FilePlus,
+                                    crate::ui::emerald(),
+                                    t!("importDialog.newFiles").to_string(),
+                                    &analysis.new_files,
+                                    false,
+                                    cx,
+                                ))
+                            })
+                            .when(!analysis.conflicts.is_empty(), |this| {
+                                this.child(self.render_section(
+                                    IconName::TriangleAlert,
+                                    crate::ui::amber(cx),
+                                    t!("importDialog.conflicts").to_string(),
+                                    &analysis.conflicts,
+                                    true,
+                                    cx,
+                                ))
+                            })
+                            .when(!analysis.unchanged.is_empty(), |this| {
+                                this.child(self.render_section(
+                                    IconName::CircleCheck,
+                                    muted_foreground,
+                                    t!("importDialog.unchanged").to_string(),
+                                    &analysis.unchanged,
+                                    false,
+                                    cx,
+                                ))
+                            }),
+                        |this| &mut this.scroll,
+                        cx,
+                    )
+                    .max_h_80(),
             )
             .child(
                 h_flex()

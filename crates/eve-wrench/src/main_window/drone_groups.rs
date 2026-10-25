@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use eve_wrench_core::SettingsEntry;
 use eve_wrench_core::drone_groups::{
-    self, DEFAULT_PATTERN, DroneCategory, DroneGroupPreset, PATTERN_STYLES, PATTERN_TOKENS,
-    PatternError,
+    self, DEFAULT_PATTERN, DroneCategory, DroneGroupOrder, DroneGroupPreset, PATTERN_STYLES,
+    PATTERN_TOKENS, PatternError,
 };
 use eve_wrench_core::esi;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Sizable as _, WindowExt as _, h_flex, v_flex,
@@ -21,6 +22,13 @@ use rust_i18n::t;
 use super::MainView;
 use crate::store::StoreEvent;
 use crate::ui::{self, StyleExt as _};
+
+#[derive(Clone)]
+struct DroneGroupDraft {
+    selected: HashSet<String>,
+    pattern: String,
+    order: DroneGroupOrder,
+}
 
 impl MainView {
     pub(super) fn create_drone_editor(
@@ -40,16 +48,20 @@ impl MainView {
             .unwrap_or_else(|| DEFAULT_PATTERN.to_string());
         let pattern_input = cx.new(|cx| InputState::new(window, cx).default_value(pattern));
         let saved_pattern = pattern_input.read(cx).value().to_string();
+        let order = self.store.read(cx).config().drone_group_order.clone();
         let store = self.store.clone();
         let loading = present.is_none();
         let present = present.unwrap_or_default();
         let editor = cx.new(|cx: &mut Context<DroneGroupsEditor>| DroneGroupsEditor {
             path: PathBuf::from(&entry.path),
             step: Step::Groups,
+            scroll: crate::scrolling::SmoothScroll::default(),
             selected: present.clone(),
             present,
             main,
             saved_pattern,
+            saved_order: order.clone(),
+            order,
             disk_changed: false,
             loading,
             error: None,
@@ -62,7 +74,7 @@ impl MainView {
             }),
             _store_subscription: cx.subscribe_in(&store, window, |this, _, event, window, cx| {
                 if matches!(event, StoreEvent::DataChanged) && !this.saving && !this.loading {
-                    if this.selected != this.present || this.pattern(cx) != this.saved_pattern {
+                    if this.is_dirty(cx) {
                         this.disk_changed = true;
                         cx.notify();
                     } else {
@@ -108,21 +120,29 @@ impl MainView {
     fn prompt_drone_group_save(
         &mut self,
         path: PathBuf,
-        selected: HashSet<String>,
-        pattern: String,
+        draft: DroneGroupDraft,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let main = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, _, _| {
-            let append_main = main.clone();
-            let replace_main = main.clone();
-            let append_path = path.clone();
-            let replace_path = path.clone();
-            let append_selected = selected.clone();
-            let replace_selected = selected.clone();
-            let append_pattern = pattern.clone();
-            let replace_pattern = pattern.clone();
+            let choices = [
+                (
+                    "drone-save-update",
+                    "droneGroups.updateNames",
+                    drone_groups::DroneSaveMode::Update,
+                ),
+                (
+                    "drone-save-append",
+                    "droneGroups.append",
+                    drone_groups::DroneSaveMode::Append,
+                ),
+                (
+                    "drone-save-replace",
+                    "droneGroups.replace",
+                    drone_groups::DroneSaveMode::Replace,
+                ),
+            ];
             dialog
                 .title(t!("droneGroups.saveModeTitle").to_string())
                 .child(
@@ -131,47 +151,33 @@ impl MainView {
                         .child(t!("droneGroups.saveModeHint").to_string())
                         .child(
                             h_flex()
+                                .flex_wrap()
                                 .gap_2()
-                                .child(
-                                    Button::new("drone-save-append")
+                                .children(choices.into_iter().map(|(id, label, mode)| {
+                                    let main = main.clone();
+                                    let path = path.clone();
+                                    let draft = draft.clone();
+                                    Button::new(id)
                                         .outline()
-                                        .label(t!("droneGroups.append").to_string())
+                                        .when(
+                                            matches!(mode, drone_groups::DroneSaveMode::Replace),
+                                            |button| button.danger(),
+                                        )
+                                        .label(t!(label).to_string())
                                         .on_click(move |_, window, cx| {
                                             window.close_dialog(cx);
-                                            append_main
-                                                .update(cx, |main, cx| {
-                                                    main.save_drone_groups(
-                                                        append_path.clone(),
-                                                        append_selected.clone(),
-                                                        append_pattern.clone(),
-                                                        drone_groups::DroneSaveMode::Append,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                })
-                                                .ok();
-                                        }),
-                                )
-                                .child(
-                                    Button::new("drone-save-replace")
-                                        .danger()
-                                        .label(t!("droneGroups.replace").to_string())
-                                        .on_click(move |_, window, cx| {
-                                            window.close_dialog(cx);
-                                            replace_main
-                                                .update(cx, |main, cx| {
-                                                    main.save_drone_groups(
-                                                        replace_path.clone(),
-                                                        replace_selected.clone(),
-                                                        replace_pattern.clone(),
-                                                        drone_groups::DroneSaveMode::Replace,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                })
-                                                .ok();
-                                        }),
-                                ),
+                                            main.update(cx, |main, cx| {
+                                                main.save_drone_groups(
+                                                    path.clone(),
+                                                    draft.clone(),
+                                                    mode,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                            .ok();
+                                        })
+                                })),
                         ),
                 )
         });
@@ -180,16 +186,23 @@ impl MainView {
     fn save_drone_groups(
         &mut self,
         path: PathBuf,
-        selected: HashSet<String>,
-        pattern: String,
+        draft: DroneGroupDraft,
         mode: drone_groups::DroneSaveMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let DroneGroupDraft {
+            selected,
+            pattern,
+            order,
+        } = draft;
         let backup = self.store.read(cx).config().auto_backup;
         let stored = (pattern != DEFAULT_PATTERN).then(|| pattern.clone());
         if let Err(e) = self.store.update(cx, |store, cx| {
-            store.update_config(cx, |config| config.drone_group_pattern = stored)
+            store.update_config(cx, |config| {
+                config.drone_group_pattern = stored;
+                config.drone_group_order = order.clone();
+            })
         }) {
             ui::notify_error(t!("toast.updateSettingFailed"), e, window, cx);
             return;
@@ -204,14 +217,15 @@ impl MainView {
         let source = key.clone();
         let saved_selected = selected.clone();
         let saved_pattern = pattern.clone();
+        let saved_order = order.clone();
         self.run_job(
             window,
             cx,
             move |_| {
-                drone_groups::write_drone_groups_with_mode(
-                    &path, &selected, &pattern, mode, backup,
+                drone_groups::write_drone_groups_with_order(
+                    &path, &selected, &pattern, &order, mode, backup,
                 )?;
-                drone_groups::read_drone_groups_with_pattern(&path, &pattern)
+                drone_groups::read_drone_groups_with_order(&path, &pattern, &order)
             },
             move |main, result, window, cx| {
                 if let Some(editor) = main.drone_editors.get(&key) {
@@ -223,6 +237,7 @@ impl MainView {
                                 editor.selected = present.clone();
                             }
                             editor.saved_pattern = saved_pattern.clone();
+                            editor.saved_order = saved_order.clone();
                             editor.disk_changed = false;
                         }
                         cx.notify();
@@ -250,16 +265,7 @@ impl MainView {
     }
 }
 
-const CATEGORIES: [DroneCategory; 8] = [
-    DroneCategory::Light,
-    DroneCategory::Medium,
-    DroneCategory::Heavy,
-    DroneCategory::Sentry,
-    DroneCategory::Special,
-    DroneCategory::Ewar,
-    DroneCategory::Logistics,
-    DroneCategory::Industry,
-];
+const CATEGORIES: [DroneCategory; 8] = drone_groups::DEFAULT_GROUP_ORDER;
 
 // Examples for the naming step: a drone, a sentry and an EWAR group
 const EXAMPLE_IDS: [&str; 3] = ["hobgoblin", "garde", "light-ecm"];
@@ -285,12 +291,15 @@ impl Step {
 
 pub(super) struct DroneGroupsEditor {
     saved_pattern: String,
+    saved_order: DroneGroupOrder,
+    order: DroneGroupOrder,
     disk_changed: bool,
     loading: bool,
     saving: bool,
     error: Option<String>,
     path: PathBuf,
     step: Step,
+    scroll: crate::scrolling::SmoothScroll,
     // Presets the account has now, and the ones it will have
     present: HashSet<String>,
     selected: HashSet<String>,
@@ -303,7 +312,9 @@ pub(super) struct DroneGroupsEditor {
 
 impl DroneGroupsEditor {
     pub(super) fn is_dirty(&self, cx: &App) -> bool {
-        self.selected != self.present || self.pattern(cx) != self.saved_pattern
+        self.selected != self.present
+            || self.pattern(cx) != self.saved_pattern
+            || self.order != self.saved_order
     }
 
     fn load(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -312,10 +323,11 @@ impl DroneGroupsEditor {
         self.disk_changed = false;
         let path = self.path.clone();
         let pattern = self.saved_pattern.clone();
+        let order = self.saved_order.clone();
         cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
-                    drone_groups::read_drone_groups_with_pattern(&path, &pattern)
+                    drone_groups::read_drone_groups_with_order(&path, &pattern, &order)
                 })
                 .await;
             this.update_in(cx, |this, _, cx| {
@@ -391,6 +403,7 @@ impl DroneGroupsEditor {
                     }
                     view.update(cx, |this, cx| {
                         this.step = step;
+                        this.scroll.reset();
                         cx.notify();
                     })
                     .ok();
@@ -564,6 +577,75 @@ impl DroneGroupsEditor {
         )
     }
 
+    fn render_order(&self, cx: &mut Context<Self>) -> Div {
+        let categories = self.order.categories();
+        let rows: Vec<_> = categories
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, category)| {
+                let label = t!(format!("droneGroups.category.{}", category.id())).to_string();
+                h_flex()
+                    .w_1_2()
+                    .gap_1()
+                    .pr_3()
+                    .py_0p5()
+                    .child(
+                        div()
+                            .w(px(28.))
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!("{:02}", index + 1)),
+                    )
+                    .child(div().flex_1().text_sm().child(label.clone()))
+                    .children(
+                        [
+                            (-1, "up", IconName::ChevronUp),
+                            (1, "down", IconName::ChevronDown),
+                        ]
+                        .into_iter()
+                        .map(|(delta, direction, icon)| {
+                            let disabled = (delta < 0 && index == 0)
+                                || (delta > 0 && index + 1 == categories.len());
+                            Button::new(SharedString::from(format!(
+                                "drone-order-{}-{direction}",
+                                category.id()
+                            )))
+                            .ghost()
+                            .xsmall()
+                            .icon(icon)
+                            .disabled(disabled)
+                            .tooltip(
+                                t!(format!("droneGroups.move{direction}"), name = label)
+                                    .to_string(),
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.order.move_category(category, delta);
+                                    cx.notify();
+                                },
+                            ))
+                        }),
+                    )
+            })
+            .collect();
+        v_flex()
+            .gap_1()
+            .child(
+                Self::section_header(t!("droneGroups.typeOrder").to_string(), None, cx).child(
+                    Button::new("drone-order-reset")
+                        .ghost()
+                        .xsmall()
+                        .label(t!("droneGroups.resetOrder").to_string())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.order = DroneGroupOrder::default();
+                            cx.notify();
+                        })),
+                ),
+            )
+            .child(h_flex().flex_wrap().children(rows))
+    }
+
     fn render_naming(
         &self,
         presets: &[DroneGroupPreset],
@@ -584,12 +666,19 @@ impl DroneGroupsEditor {
             .iter()
             .filter(|p| EXAMPLE_IDS.contains(&p.id.as_str()))
             .collect();
-        let custom = !PATTERN_STYLES.iter().any(|(_, p)| *p == current);
+        let sorted = current.starts_with("{order} ");
+        let base = current.strip_prefix("{order} ").unwrap_or(&current);
+        let custom = !PATTERN_STYLES.iter().any(|(_, p)| *p == base);
 
         let styles: Vec<_> = PATTERN_STYLES
             .iter()
             .map(|(id, pattern)| {
-                let selected = current == *pattern;
+                let selected = base == *pattern;
+                let pattern = if sorted {
+                    format!("{{order}} {pattern}")
+                } else {
+                    pattern.to_string()
+                };
                 v_flex()
                     .id(SharedString::from(format!("drone-style-{id}")))
                     .test_support()
@@ -625,7 +714,7 @@ impl DroneGroupsEditor {
                             .text_xs()
                             .truncate()
                             .text_color(muted)
-                            .child(preset.label(pattern))
+                            .child(preset.label_with_order(&pattern, &self.order))
                     }))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.pattern_input.update(cx, |input, cx| {
@@ -671,13 +760,41 @@ impl DroneGroupsEditor {
             Some(PatternError::Unbalanced) => t!("droneGroups.patternBrackets").to_string(),
             None => examples
                 .iter()
-                .map(|p| p.label(&current))
+                .map(|p| p.label_with_order(&current, &self.order))
                 .collect::<Vec<_>>()
                 .join("   ·   "),
         };
 
         v_flex()
             .gap_5()
+            .child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        Checkbox::new("drone-sort-types")
+                            .label(t!("droneGroups.sortTypes").to_string())
+                            .checked(current.starts_with("{order} "))
+                            .on_change(cx.listener(|this, enabled: &bool, window, cx| {
+                                let current = this.pattern(cx);
+                                let base = current.strip_prefix("{order} ").unwrap_or(&current);
+                                let pattern = if *enabled {
+                                    format!("{{order}} {base}")
+                                } else {
+                                    base.to_string()
+                                };
+                                this.pattern_input
+                                    .update(cx, |input, cx| input.set_value(pattern, window, cx));
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(t!("droneGroups.sortTypesHint").to_string()),
+                    ),
+            )
+            .when(sorted, |this| this.child(self.render_order(cx)))
             .child(
                 v_flex()
                     .gap_2()
@@ -742,6 +859,11 @@ impl DroneGroupsEditor {
         let theme = cx.theme();
         let accent = ui::target_color();
         let (muted, pill) = (theme.muted_foreground, theme.muted.opacity(0.7));
+        let categories = if pattern.contains("{order}") {
+            self.order.categories().to_vec()
+        } else {
+            CATEGORIES.to_vec()
+        };
         let removed: Vec<&DroneGroupPreset> = presets
             .iter()
             .filter(|p| self.present.contains(&p.id) && !self.selected.contains(&p.id))
@@ -780,7 +902,7 @@ impl DroneGroupsEditor {
                         .child(if struck {
                             preset.name.clone()
                         } else {
-                            preset.label(&pattern)
+                            preset.label_with_order(&pattern, &self.order)
                         }),
                 )
                 .children(badge)
@@ -794,7 +916,7 @@ impl DroneGroupsEditor {
                     .text_color(muted)
                     .child(t!("droneGroups.reviewHint", count = self.selected.len()).to_string()),
             )
-            .children(CATEGORIES.into_iter().filter_map(|category| {
+            .children(categories.into_iter().filter_map(|category| {
                 let section: Vec<&DroneGroupPreset> = presets
                     .iter()
                     .filter(|p| p.category == category && self.selected.contains(&p.id))
@@ -878,6 +1000,8 @@ impl DroneGroupsEditor {
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.selected = this.present.clone();
                         this.step = Step::Groups;
+                        this.scroll.reset();
+                        this.order = this.saved_order.clone();
                         let pattern = this.saved_pattern.clone();
                         this.pattern_input
                             .update(cx, |input, cx| input.set_value(pattern, window, cx));
@@ -892,6 +1016,7 @@ impl DroneGroupsEditor {
                         .label(t!("droneGroups.back").to_string())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.step = back;
+                            this.scroll.reset();
                             cx.notify();
                         })),
                 )
@@ -904,6 +1029,7 @@ impl DroneGroupsEditor {
                         .disabled(step == Step::Naming && invalid)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.step = next;
+                            this.scroll.reset();
                             cx.notify();
                         })),
                 ),
@@ -914,13 +1040,14 @@ impl DroneGroupsEditor {
                         .disabled(invalid || self.saving)
                         .on_click(cx.listener(|this, _, window, cx| {
                             let path = this.path.clone();
-                            let selected = this.selected.clone();
-                            let pattern = this.pattern(cx);
+                            let draft = DroneGroupDraft {
+                                selected: this.selected.clone(),
+                                pattern: this.pattern(cx),
+                                order: this.order.clone(),
+                            };
                             this.main
                                 .update(cx, |main, cx| {
-                                    main.prompt_drone_group_save(
-                                        path, selected, pattern, window, cx,
-                                    )
+                                    main.prompt_drone_group_save(path, draft, window, cx)
                                 })
                                 .ok();
                         })),
@@ -1006,13 +1133,9 @@ impl Render for DroneGroupsEditor {
             })
             .child(self.render_steps(invalid, cx))
             .child(
-                div()
-                    .id("drone-groups-body")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .pr_1()
-                    .child(body),
+                self.scroll
+                    .view("drone-groups-body", body, |this| &mut this.scroll, cx)
+                    .flex_1(),
             )
             .child(self.render_footer(invalid, cx))
             .into_any_element()
@@ -1067,6 +1190,13 @@ mod tests {
                 main.drone_editors.insert(path, editor);
             });
             window.render_frame(cx);
+            let editor = main.read(cx).drone_editors.values().next().unwrap().clone();
+            crate::scrolling::tests::check_vertical(
+                &editor,
+                |editor| &mut editor.scroll,
+                window,
+                cx,
+            );
             window.click("drone-tile-hobgoblin", cx);
             window.click("drone-toggle-light", cx);
             window.click("drone-groups-next", cx);
@@ -1076,11 +1206,44 @@ mod tests {
             window.click("drone-groups-next", cx);
             assert!(window.try_find("drone-groups-save").is_none());
             window.click("drone-style-compact", cx);
+            let sort = window.find("drone-sort-types").bounds();
+            window.click_at("drone-sort-types", point(px(8.), sort.size.height / 2.), cx);
+            assert!(editor.read(cx).pattern(cx).starts_with("{order} "));
+            window.click("drone-order-light-down", cx);
+            assert_eq!(
+                editor.read(cx).order.categories()[0],
+                eve_wrench_core::drone_groups::DroneCategory::Medium
+            );
+            assert_eq!(
+                editor.read(cx).order.categories()[1],
+                eve_wrench_core::drone_groups::DroneCategory::Light
+            );
+            assert!(editor.read(cx).is_dirty(cx));
+            let hobgoblin = eve_wrench_core::drone_groups::catalog()
+                .iter()
+                .find(|preset| preset.id == "hobgoblin")
+                .unwrap()
+                .clone();
+            assert!(
+                hobgoblin
+                    .label_with_order(&editor.read(cx).pattern(cx), &editor.read(cx).order)
+                    .starts_with("02 ")
+            );
+            window.click("drone-order-reset", cx);
+            assert_eq!(
+                editor.read(cx).order,
+                eve_wrench_core::drone_groups::DroneGroupOrder::default()
+            );
+            window.click("drone-order-industry-up", cx);
+            window.click("drone-style-plain", cx);
+            assert_eq!(editor.read(cx).pattern(cx), "{order} {name}");
             window.click("drone-groups-next", cx);
             window.find("drone-groups-save");
             window.click("drone-groups-back", cx);
             window.find("drone-style-plain");
             window.click("drone-groups-cancel", cx);
+            assert_eq!(editor.read(cx).order, editor.read(cx).saved_order);
+            assert!(!editor.read(cx).is_dirty(cx));
             window.render_frame(cx);
         })
         .unwrap();

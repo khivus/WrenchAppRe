@@ -1,8 +1,10 @@
 use super::MainView;
+pub(super) use crate::scrolling::SmoothScroll as TableScroll;
+#[cfg(test)]
+use crate::scrolling::WheelMotion;
 use eve_wrench_core::SettingsKind;
 use gpui_kit::*;
 use std::ops::Range;
-use std::time::Instant;
 
 // Keep two extra rows on each side so small wheel movements need little new layout.
 pub(super) fn visible_rows(
@@ -20,67 +22,6 @@ pub(super) fn visible_rows(
         .ceil()
         .max(0.) as usize;
     start.min(count)..end.max(start).min(count)
-}
-
-#[derive(Default)]
-pub(super) struct WheelMotion {
-    target: Option<f32>,
-    expected: f32,
-}
-
-impl WheelMotion {
-    pub(super) fn cancel(&mut self) {
-        self.target = None;
-    }
-
-    fn push(&mut self, current: f32, delta: f32, limit: f32) {
-        let base = self
-            .target
-            .filter(|target| {
-                (self.expected - current).abs() < 1. && (*target - current) * delta >= 0.
-            })
-            .unwrap_or(current);
-        self.target = Some((base + delta).clamp(-limit.max(0.), 0.));
-        self.expected = current;
-    }
-
-    fn step(&mut self, current: f32, limit: f32, elapsed: f32) -> Option<f32> {
-        let target = self.target?;
-        // A scrollbar drag, tab change, or native trackpad scroll takes precedence.
-        if (current - self.expected).abs() > 1. {
-            self.cancel();
-            return None;
-        }
-        let target = target.clamp(-limit.max(0.), 0.);
-        let next = current + (target - current) * (1. - (-elapsed.clamp(0.001, 0.1) / 0.045).exp());
-        let next = if (target - next).abs() < 0.5 {
-            self.cancel();
-            target
-        } else {
-            self.target = Some(target);
-            next
-        };
-        self.expected = next;
-        Some(next)
-    }
-}
-
-pub(super) struct TableScroll {
-    pub(super) handle: ScrollHandle,
-    motion: WheelMotion,
-    pub(super) frame_pending: bool,
-    pub(super) last_frame: Instant,
-}
-
-impl Default for TableScroll {
-    fn default() -> Self {
-        Self {
-            handle: ScrollHandle::new(),
-            motion: WheelMotion::default(),
-            frame_pending: false,
-            last_frame: Instant::now(),
-        }
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -106,8 +47,7 @@ impl MainView {
             &mut self.character_scroll,
             &mut self.backup_scroll,
         ] {
-            scroll.motion.cancel();
-            scroll.handle.set_offset(point(px(0.), px(0.)));
+            scroll.reset();
         }
     }
 
@@ -132,83 +72,8 @@ impl MainView {
         kind: TableKind,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let scroll = self.table_scroll(kind).handle.clone();
-        let rendered_offset = scroll.offset();
-        let wheel =
-            cx.listener(
-                move |this, event: &ScrollWheelEvent, window, cx| match event.delta {
-                    ScrollDelta::Lines(delta) if delta.y != 0. => {
-                        let scroll = this.table_scroll_mut(kind);
-                        scroll.motion.push(
-                            scroll.handle.offset().y.as_f32(),
-                            delta.y * 10.,
-                            scroll.handle.max_offset().y.as_f32(),
-                        );
-                        if !scroll.frame_pending {
-                            scroll.last_frame = Instant::now();
-                            this.schedule_browser_frame(kind, window, cx);
-                        }
-                        cx.stop_propagation();
-                    }
-                    ScrollDelta::Pixels(_) => this.table_scroll_mut(kind).motion.cancel(),
-                    _ => {}
-                },
-            );
-        let cancel = cx.listener(move |this, _: &MouseDownEvent, _, _| {
-            this.table_scroll_mut(kind).motion.cancel()
-        });
-        canvas(
-            |bounds, window, _| window.insert_hitbox(bounds, HitboxBehavior::Normal),
-            move |_, hitbox, window, cx| {
-                // Layout can clamp the offset after a resize or data removal.
-                // Refresh the visible rows and sticky header at that actual offset.
-                if scroll.offset() != rendered_offset {
-                    cx.notify(window.current_view());
-                }
-                let wheel_hitbox = hitbox.clone();
-                window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
-                    if phase == DispatchPhase::Capture && wheel_hitbox.should_handle_scroll(window)
-                    {
-                        wheel(event, window, cx);
-                    }
-                });
-                window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                    if phase == DispatchPhase::Capture && hitbox.is_hovered(window) {
-                        cancel(event, window, cx);
-                    }
-                });
-            },
-        )
-        .absolute()
-        .inset_0()
-    }
-
-    fn schedule_browser_frame(
-        &mut self,
-        kind: TableKind,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.table_scroll_mut(kind).frame_pending = true;
-        // This wakes the frame source directly and is safe outside painting,
-        // including mouse input and the next-frame callback itself.
-        cx.on_next_frame(window, move |this, window, cx| {
-            let scroll = this.table_scroll_mut(kind);
-            scroll.frame_pending = false;
-            let elapsed = scroll.last_frame.elapsed().as_secs_f32();
-            scroll.last_frame = Instant::now();
-            if let Some(next) = scroll.motion.step(
-                scroll.handle.offset().y.as_f32(),
-                scroll.handle.max_offset().y.as_f32(),
-                elapsed,
-            ) {
-                scroll.handle.set_offset(point(px(0.), px(next)));
-                cx.notify();
-            }
-            if scroll.motion.target.is_some() {
-                this.schedule_browser_frame(kind, window, cx);
-            }
-        });
+        self.table_scroll(kind)
+            .wheel_layer(move |this| this.table_scroll_mut(kind), cx)
     }
 }
 

@@ -361,7 +361,11 @@ mod tests {
             .clone();
         let source_bytes = encode_settings_json(&source, true).unwrap();
         fs::write(&source_path, &source_bytes).unwrap();
-        for mode in [DroneSaveMode::Append, DroneSaveMode::Replace] {
+        for mode in [
+            DroneSaveMode::Append,
+            DroneSaveMode::Update,
+            DroneSaveMode::Replace,
+        ] {
             let profile = dir.join(format!("{mode:?}"));
             fs::create_dir_all(&profile).unwrap();
             let mut originals = Vec::new();
@@ -401,7 +405,7 @@ mod tests {
                     .unwrap();
                 assert_eq!(groups["utf8:New"]["bytes:droneIDs"], json!([]));
                 match mode {
-                    DroneSaveMode::Append => {
+                    DroneSaveMode::Append | DroneSaveMode::Update => {
                         assert_eq!(groups.len(), 4);
                         for (key, old_group) in target["bytes:ui"]["bytes:droneBlah2"]["tuple"][1]
                             .as_object()

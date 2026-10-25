@@ -27,6 +27,8 @@ pub struct Config {
     // None means the built-in default pattern
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drone_group_pattern: Option<String>,
+    #[serde(default)]
+    pub drone_group_order: crate::drone_groups::DroneGroupOrder,
     #[serde(flatten)]
     other: serde_json::Map<String, serde_json::Value>,
 }
@@ -95,6 +97,7 @@ impl Default for Config {
             copy_groups: HashMap::new(),
             character_columns: CharacterColumns::default(),
             drone_group_pattern: None,
+            drone_group_order: crate::drone_groups::DroneGroupOrder::default(),
             other: serde_json::Map::new(),
         }
     }
@@ -175,6 +178,54 @@ mod tests {
         }
         let restored: Config = serde_json::from_value(written).unwrap();
         assert_eq!(restored, config);
+    }
+
+    #[test]
+    fn custom_drone_order_round_trips_and_normalizes_partial_preferences() {
+        use crate::drone_groups::{DEFAULT_GROUP_ORDER, DroneCategory};
+        let mut config: Config = serde_json::from_str(
+            r#"{
+            "droneGroupOrder": ["industry", "logistics", "industry", "future-type"],
+            "autoBackup": false, "extra": 42
+        }"#,
+        )
+        .unwrap();
+        let order = config.drone_group_order.categories();
+        assert_eq!(order.len(), DEFAULT_GROUP_ORDER.len());
+        assert_eq!(
+            order[..2],
+            [DroneCategory::Industry, DroneCategory::Logistics]
+        );
+        assert!(
+            DEFAULT_GROUP_ORDER
+                .iter()
+                .all(|category| order.contains(category))
+        );
+        config
+            .drone_group_order
+            .move_category(DroneCategory::Light, -20);
+        assert_eq!(
+            config.drone_group_order.categories()[0],
+            DroneCategory::Light
+        );
+        config
+            .drone_group_order
+            .move_category(DroneCategory::Light, 20);
+        assert_eq!(
+            config.drone_group_order.categories()[7],
+            DroneCategory::Light
+        );
+        let written = serde_json::to_value(&config).unwrap();
+        assert_eq!(written["extra"], 42);
+        assert_eq!(written["autoBackup"], false);
+        assert_eq!(serde_json::from_value::<Config>(written).unwrap(), config);
+        assert_eq!(
+            serde_json::from_str::<Config>("{}")
+                .unwrap()
+                .drone_group_order
+                .categories(),
+            DEFAULT_GROUP_ORDER
+        );
     }
 
     #[test]

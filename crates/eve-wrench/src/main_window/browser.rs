@@ -266,13 +266,30 @@ impl MainView {
             .border_b_1()
             .border_color(border)
             .child(
-                h_flex()
-                    .id("navigation-tabs")
+                div()
+                    .relative()
                     .h_full()
                     .flex_1()
                     .min_w_0()
-                    .overflow_x_scroll()
-                    .children(items),
+                    .overflow_hidden()
+                    .child(
+                        h_flex()
+                            .id("navigation-tabs")
+                            .h_full()
+                            .w_full()
+                            .overflow_x_scroll()
+                            .track_scroll(&self.navigation_scroll.handle)
+                            .children(items),
+                    )
+                    .child(
+                        self.navigation_scroll
+                            .wheel_layer(|this| &mut this.navigation_scroll, cx),
+                    )
+                    .child(
+                        Scrollbar::horizontal(&self.navigation_scroll.handle)
+                            .id("navigation-scrollbar")
+                            .mode(ScrollbarMode::Always),
+                    ),
             )
             .child(self.render_app_controls(cx))
     }

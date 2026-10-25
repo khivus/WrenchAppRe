@@ -262,6 +262,7 @@ impl MainView {
             kind,
             entries,
             selected: HashSet::new(),
+            scroll: crate::scrolling::SmoothScroll::default(),
         });
         window.open_dialog(cx, move |dialog, _, _| {
             dialog
@@ -269,6 +270,9 @@ impl MainView {
                     EditorSyncKind::Probes => t!("editors.syncTitle").to_string(),
                     EditorSyncKind::Drones(DroneSaveMode::Append) => {
                         t!("editors.syncAppendTitle").to_string()
+                    }
+                    EditorSyncKind::Drones(DroneSaveMode::Update) => {
+                        t!("editors.syncUpdateTitle").to_string()
                     }
                     EditorSyncKind::Drones(DroneSaveMode::Replace) => {
                         t!("editors.syncReplaceTitle").to_string()
@@ -325,6 +329,7 @@ impl MainView {
 }
 
 struct EditorSyncDialog {
+    scroll: crate::scrolling::SmoothScroll,
     main: WeakEntity<MainView>,
     source: String,
     kind: EditorSyncKind,
@@ -340,6 +345,9 @@ impl Render for EditorSyncDialog {
                 EditorSyncKind::Probes => t!("editors.syncHint").to_string(),
                 EditorSyncKind::Drones(DroneSaveMode::Append) => {
                     t!("editors.syncAppendHint").to_string()
+                }
+                EditorSyncKind::Drones(DroneSaveMode::Update) => {
+                    t!("editors.syncUpdateHint").to_string()
                 }
                 EditorSyncKind::Drones(DroneSaveMode::Replace) => {
                     t!("editors.syncReplaceHint").to_string()
@@ -359,30 +367,33 @@ impl Render for EditorSyncDialog {
                     })),
             )
             .child(
-                v_flex()
-                    .id("sync-accounts")
-                    .max_h(px(260.))
-                    .overflow_y_scroll()
-                    .children(self.entries.iter().enumerate().map(|(index, entry)| {
-                        let path = entry.path.clone();
-                        Checkbox::new(SharedString::from(format!("sync-account-{index}")))
-                            .label(format!(
-                                "{} · {} · {} · {}",
-                                entry.display_name,
-                                entry.id,
-                                entry.server.short_name(),
-                                entry.profile
-                            ))
-                            .checked(self.selected.contains(&path))
-                            .on_change(cx.listener(move |this, checked: &bool, _, cx| {
-                                if *checked {
-                                    this.selected.insert(path.clone());
-                                } else {
-                                    this.selected.remove(&path);
-                                }
-                                cx.notify();
-                            }))
-                    })),
+                self.scroll
+                    .view(
+                        "sync-accounts",
+                        v_flex().children(self.entries.iter().enumerate().map(|(index, entry)| {
+                            let path = entry.path.clone();
+                            Checkbox::new(SharedString::from(format!("sync-account-{index}")))
+                                .label(format!(
+                                    "{} · {} · {} · {}",
+                                    entry.display_name,
+                                    entry.id,
+                                    entry.server.short_name(),
+                                    entry.profile
+                                ))
+                                .checked(self.selected.contains(&path))
+                                .on_change(cx.listener(move |this, checked: &bool, _, cx| {
+                                    if *checked {
+                                        this.selected.insert(path.clone());
+                                    } else {
+                                        this.selected.remove(&path);
+                                    }
+                                    cx.notify();
+                                }))
+                        })),
+                        |this| &mut this.scroll,
+                        cx,
+                    )
+                    .max_h(px(260.)),
             )
             .child(
                 h_flex()

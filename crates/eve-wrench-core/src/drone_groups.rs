@@ -14,7 +14,7 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, OnceLock, RwLock};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::backups::auto_backup;
@@ -43,8 +43,9 @@ pub const PATTERN_STYLES: [(&str, &str); 3] = [
     ("plain", "{name}"),
 ];
 
-pub const PATTERN_TOKENS: [&str; 8] = [
+pub const PATTERN_TOKENS: [&str; 9] = [
     "name",
+    "order",
     "type",
     "type_short",
     "damage",
@@ -54,7 +55,7 @@ pub const PATTERN_TOKENS: [&str; 8] = [
     "effect",
 ];
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "lowercase")]
 pub enum DroneCategory {
     Light,
@@ -95,6 +96,73 @@ impl DroneCategory {
     }
 }
 
+pub const DEFAULT_GROUP_ORDER: [DroneCategory; 8] = [
+    DroneCategory::Light,
+    DroneCategory::Medium,
+    DroneCategory::Heavy,
+    DroneCategory::Sentry,
+    DroneCategory::Special,
+    DroneCategory::Ewar,
+    DroneCategory::Logistics,
+    DroneCategory::Industry,
+];
+
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct DroneGroupOrder(Vec<DroneCategory>);
+
+impl Default for DroneGroupOrder {
+    fn default() -> Self {
+        Self(DEFAULT_GROUP_ORDER.to_vec())
+    }
+}
+
+impl<'de> Deserialize<'de> for DroneGroupOrder {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let saved = Vec::<String>::deserialize(deserializer)?;
+        let mut order = Vec::with_capacity(DEFAULT_GROUP_ORDER.len());
+        for category in saved
+            .iter()
+            .filter_map(|id| {
+                DEFAULT_GROUP_ORDER
+                    .iter()
+                    .find(|category| category.id() == id)
+                    .copied()
+            })
+            .chain(DEFAULT_GROUP_ORDER)
+        {
+            if !order.contains(&category) {
+                order.push(category);
+            }
+        }
+        Ok(Self(order))
+    }
+}
+
+impl DroneGroupOrder {
+    pub fn categories(&self) -> &[DroneCategory] {
+        &self.0
+    }
+
+    pub fn move_category(&mut self, category: DroneCategory, delta: isize) {
+        if let Some(index) = self.0.iter().position(|value| *value == category) {
+            let destination = index.saturating_add_signed(delta).min(self.0.len() - 1);
+            let category = self.0.remove(index);
+            self.0.insert(destination, category);
+        }
+    }
+
+    fn prefix(&self, category: DroneCategory) -> String {
+        format!(
+            "{:02}",
+            self.0
+                .iter()
+                .position(|value| *value == category)
+                .unwrap_or(0)
+                + 1
+        )
+    }
+}
+
 // Max-skill numbers of the drone a preset is named after.
 #[derive(Deserialize, Debug, Clone, Default, PartialEq)]
 pub struct DroneStats {
@@ -125,9 +193,14 @@ pub struct DroneGroupPreset {
 
 impl DroneGroupPreset {
     fn token(&self, token: &str) -> Option<String> {
+        self.token_with_order(token, &DroneGroupOrder::default())
+    }
+
+    fn token_with_order(&self, token: &str, order: &DroneGroupOrder) -> Option<String> {
         let stats = &self.stats;
         match token {
             "name" => Some(self.name.clone()),
+            "order" => Some(order.prefix(self.category)),
             "type" => Some(self.category.naming_type().0.to_string()),
             "type_short" => Some(self.category.naming_type().1.to_string()),
             "damage" => stats.damage.clone(),
@@ -145,6 +218,10 @@ impl DroneGroupPreset {
     // The group name under `pattern`, or under the default one when the
     // pattern is invalid.
     pub fn label(&self, pattern: &str) -> String {
+        self.label_with_order(pattern, &DroneGroupOrder::default())
+    }
+
+    pub fn label_with_order(&self, pattern: &str, order: &DroneGroupOrder) -> String {
         let parts = parse_pattern(pattern)
             .or_else(|_| parse_pattern(DEFAULT_PATTERN))
             .unwrap_or_default();
@@ -152,22 +229,24 @@ impl DroneGroupPreset {
         for part in &parts {
             match part {
                 Part::Optional(inner) => {
-                    if let Some(text) = self.render_all(inner) {
+                    if let Some(text) = self.render_all(inner, order) {
                         out.push_str(&text);
                     }
                 }
-                Part::Token(token) => out.push_str(&self.token(token).unwrap_or_default()),
+                Part::Token(token) => {
+                    out.push_str(&self.token_with_order(token, order).unwrap_or_default())
+                }
                 Part::Text(text) => out.push_str(text),
             }
         }
         out.trim().to_string()
     }
 
-    fn render_all(&self, parts: &[Part]) -> Option<String> {
+    fn render_all(&self, parts: &[Part], order: &DroneGroupOrder) -> Option<String> {
         parts.iter().try_fold(String::new(), |mut out, part| {
             match part {
                 Part::Text(text) => out.push_str(text),
-                Part::Token(token) => out.push_str(&self.token(token)?),
+                Part::Token(token) => out.push_str(&self.token_with_order(token, order)?),
                 Part::Optional(_) => unreachable!("sections do not nest"),
             }
             Some(out)
@@ -538,6 +617,9 @@ fn matching_preset<'a>(
                     .collect();
                 // Recognize groups saved before short types were capitalized.
                 tokens.push(preset.category.naming_type().1.to_ascii_lowercase());
+                // Earlier saves may use any category position, including before
+                // the player changed the order or used adjacent naming tokens.
+                tokens.extend((1..=DEFAULT_GROUP_ORDER.len()).map(|rank| format!("{rank:02}")));
                 // Recognize light groups saved under the former Small/Sml names.
                 if preset.category == DroneCategory::Light {
                     tokens.extend(["Small", "Sml", "sml"].map(str::to_string));
@@ -551,14 +633,15 @@ fn matching_preset<'a>(
 }
 
 // Exact pattern matches also cover adjacent tokens, e.g. {type_short}{name}.
-fn matching_preset_with_pattern<'a>(
+fn matching_preset_with_order<'a>(
     presets: &'a [DroneGroupPreset],
     label: &str,
     pattern: &str,
+    order: &DroneGroupOrder,
 ) -> Option<&'a DroneGroupPreset> {
     let mut exact = presets
         .iter()
-        .filter(|preset| preset.label(pattern) == label);
+        .filter(|preset| preset.label_with_order(pattern, order) == label);
     match (exact.next(), exact.next()) {
         (Some(preset), None) => Some(preset),
         (None, _) => matching_preset(presets, label),
@@ -571,11 +654,20 @@ fn present_in_settings(
     presets: &[DroneGroupPreset],
     pattern: &str,
 ) -> HashSet<String> {
+    present_in_settings_with_order(root, presets, pattern, &DroneGroupOrder::default())
+}
+
+fn present_in_settings_with_order(
+    root: &Value,
+    presets: &[DroneGroupPreset],
+    pattern: &str,
+    order: &DroneGroupOrder,
+) -> HashSet<String> {
     stored_groups(root)
         .into_iter()
         .flatten()
         .filter_map(|(key, group)| {
-            matching_preset_with_pattern(presets, &group_label(key, group), pattern)
+            matching_preset_with_order(presets, &group_label(key, group), pattern, order)
         })
         .map(|p| p.id.clone())
         .collect()
@@ -597,6 +689,22 @@ fn presets_into_settings(
     selected: &HashSet<String>,
     pattern: &str,
 ) -> Result<(), String> {
+    presets_into_settings_with_order(
+        root,
+        presets,
+        selected,
+        pattern,
+        &DroneGroupOrder::default(),
+    )
+}
+
+fn presets_into_settings_with_order(
+    root: &mut Value,
+    presets: &[DroneGroupPreset],
+    selected: &HashSet<String>,
+    pattern: &str,
+    order: &DroneGroupOrder,
+) -> Result<(), String> {
     let now = filetime_now();
     let mut groups = Map::new();
     let mut written = HashSet::new();
@@ -607,7 +715,7 @@ fn presets_into_settings(
             (
                 key,
                 group,
-                matching_preset_with_pattern(presets, &group_label(key, group), pattern),
+                matching_preset_with_order(presets, &group_label(key, group), pattern, order),
             )
         })
         .collect();
@@ -620,7 +728,7 @@ fn presets_into_settings(
         let Some(preset) = preset.filter(|p| selected.contains(&p.id)) else {
             continue;
         };
-        if group_label(key, group) == preset.label(pattern)
+        if group_label(key, group) == preset.label_with_order(pattern, order)
             || !owners.contains_key(preset.id.as_str())
         {
             owners.insert(&preset.id, key);
@@ -641,7 +749,7 @@ fn presets_into_settings(
                     .and_then(|t| t.get(1))
                     .cloned()
                     .unwrap_or_else(|| json!(format!("bytes:{now}")));
-                let label = preset.label(pattern);
+                let label = preset.label_with_order(pattern, order);
                 groups.insert(
                     format!("utf8:{label}"),
                     group_entry(preset, &label, drone_ids, created),
@@ -658,7 +766,7 @@ fn presets_into_settings(
     for (i, preset) in presets.iter().enumerate() {
         if selected.contains(&preset.id) && written.insert(preset.id.clone()) {
             let created = json!(format!("bytes:{}", now + i as u64));
-            let label = preset.label(pattern);
+            let label = preset.label_with_order(pattern, order);
             groups.insert(
                 format!("utf8:{label}"),
                 group_entry(preset, &label, json!([]), created),
@@ -688,8 +796,22 @@ pub fn read_drone_groups_with_pattern(
     path: &Path,
     pattern: &str,
 ) -> Result<HashSet<String>, String> {
+    let (root, _) = load_settings_json(path)?;
+    Ok(present_in_settings(&root, &catalog(), pattern))
+}
+
+pub fn read_drone_groups_with_order(
+    path: &Path,
+    pattern: &str,
+    order: &DroneGroupOrder,
+) -> Result<HashSet<String>, String> {
     let (json, _) = load_settings_json(path)?;
-    Ok(present_in_settings(&json, &catalog(), pattern))
+    Ok(present_in_settings_with_order(
+        &json,
+        &catalog(),
+        pattern,
+        order,
+    ))
 }
 
 pub fn write_drone_groups(
@@ -715,6 +837,7 @@ pub fn write_drone_groups(
 #[derive(Clone, Copy, Debug)]
 pub enum DroneSaveMode {
     Append,
+    Update,
     Replace,
 }
 
@@ -725,10 +848,28 @@ pub fn write_drone_groups_with_mode(
     mode: DroneSaveMode,
     backup: bool,
 ) -> Result<(), String> {
+    write_drone_groups_with_order(
+        path,
+        selected,
+        pattern,
+        &DroneGroupOrder::default(),
+        mode,
+        backup,
+    )
+}
+
+pub fn write_drone_groups_with_order(
+    path: &Path,
+    selected: &HashSet<String>,
+    pattern: &str,
+    order: &DroneGroupOrder,
+    mode: DroneSaveMode,
+    backup: bool,
+) -> Result<(), String> {
     validate_pattern(pattern).map_err(|e| e.to_string())?;
     let (mut root, crc) = load_settings_json(path)?;
     let mut generated = json!({});
-    presets_into_settings(&mut generated, &catalog(), selected, pattern)?;
+    presets_into_settings_with_order(&mut generated, &catalog(), selected, pattern, order)?;
     let groups = stored_groups(&generated).cloned().unwrap_or_default();
     apply_groups(&mut root, groups, mode)?;
     let bytes = encode_settings_json(&root, crc)?;
@@ -744,6 +885,53 @@ fn apply_groups(
     mode: DroneSaveMode,
 ) -> Result<(), String> {
     let old_groups = stored_groups(root).cloned().unwrap_or_default();
+    let mut renamed = Vec::new();
+    if matches!(mode, DroneSaveMode::Update) {
+        let presets = catalog();
+        let mut remaining = old_groups.clone();
+        for (key, group) in &mut groups {
+            let label = group_label(key, group);
+            let preset = matching_preset(&presets, &label);
+            let old_key = remaining
+                .iter()
+                .find(|(old_key, old_group)| {
+                    group_label(old_key, old_group) == label
+                        && old_group.get("bytes:droneGroupID") == group.get("bytes:droneGroupID")
+                })
+                .or_else(|| {
+                    remaining.iter().find(|(old_key, old_group)| {
+                        preset.is_some_and(|p| {
+                            matching_preset(&presets, &group_label(old_key, old_group))
+                                .is_some_and(|old| old.id == p.id)
+                        }) && old_group.get("bytes:droneGroupID") == group.get("bytes:droneGroupID")
+                    })
+                })
+                .map(|(key, _)| key.clone());
+            if let Some(old) = old_key.and_then(|key| remaining.remove(&key)) {
+                // Keep the target's own items and creation timestamp. Only the
+                // label part of the identity changes; favorites follow it below.
+                let old_id = old.get("bytes:id").cloned();
+                let mut updated = old;
+                updated["bytes:label"] = group["bytes:label"].clone();
+                if let Some(id) = updated
+                    .get_mut("bytes:id")
+                    .and_then(|id| id.get_mut("tuple"))
+                    .and_then(Value::as_array_mut)
+                    .filter(|id| id.len() == 2)
+                {
+                    id[0] = group["bytes:label"].clone();
+                } else {
+                    updated["bytes:id"] = group["bytes:id"].clone();
+                }
+                if let Some(old_id) = old_id {
+                    renamed.push((old_id, updated["bytes:id"].clone()));
+                }
+                *group = updated;
+            }
+        }
+        // Custom groups and unselected families remain untouched.
+        groups.extend(remaining);
+    }
     if matches!(mode, DroneSaveMode::Append) {
         let labels: HashSet<_> = old_groups
             .iter()
@@ -771,6 +959,10 @@ fn apply_groups(
         let Some(favorite) = value.get_mut("tuple").and_then(|t| t.get_mut(1)) else {
             return false;
         };
+        if let Some((_, new_id)) = renamed.iter().find(|(old_id, _)| old_id == favorite) {
+            *favorite = new_id.clone();
+            return true;
+        }
         if groups.values().any(|g| g.get("bytes:id") == Some(favorite)) {
             return true;
         }
@@ -831,7 +1023,7 @@ pub(crate) fn apply_group_definitions(
         .ok_or("Target drone settings 'ui' section is invalid")?;
     for (key, favorite) in source_ui {
         if !strip_type_prefix(key).starts_with("drones_favoriteGroupID_")
-            || (matches!(mode, DroneSaveMode::Append) && ui.contains_key(key))
+            || (!matches!(mode, DroneSaveMode::Replace) && ui.contains_key(key))
         {
             continue;
         }
@@ -1047,6 +1239,157 @@ mod tests {
                 Some(preset.id.as_str()),
             );
         }
+    }
+
+    #[test]
+    fn alphabetical_names_keep_drone_types_in_the_requested_order() {
+        let catalog = catalog();
+        let mut sorted: Vec<_> = catalog.iter().collect();
+        sorted.sort_by_key(|preset| preset.label("{order} {name}"));
+        let mut categories: Vec<_> = sorted.iter().map(|p| p.category).collect();
+        categories.dedup();
+        assert_eq!(
+            categories,
+            vec![
+                DroneCategory::Light,
+                DroneCategory::Medium,
+                DroneCategory::Heavy,
+                DroneCategory::Sentry,
+                DroneCategory::Special,
+                DroneCategory::Ewar,
+                DroneCategory::Logistics,
+                DroneCategory::Industry,
+            ]
+        );
+        for preset in catalog.iter() {
+            assert_eq!(
+                matching_preset(&catalog, &preset.label("{order}{type_short}{name}"))
+                    .map(|p| p.id.as_str()),
+                Some(preset.id.as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn updating_names_and_syncing_preserve_own_items_custom_groups_and_favorites() {
+        let catalog = catalog();
+        let selected = ids(&["hobgoblin", "hornet"]);
+        let mut original = json!({"bytes:ui": {
+            "bytes:unrelated": "utf8:keep",
+            "bytes:droneBlah2": {"tuple": ["long:1", {
+                "utf8:Hobgoblin": group("Hobgoblin", &["long:101"]),
+                "utf8:My flight": group("My flight", &["long:202"]),
+                "utf8:Ogre": group("Ogre", &[]),
+            }]},
+            "bytes:drones_favoriteGroupID_626": {"tuple": ["long:1", group("Hobgoblin", &[])["bytes:id"]]},
+        }});
+        let before = original.clone();
+        let mut generated = json!({});
+        presets_into_settings(&mut generated, &catalog, &selected, "{order} {name}").unwrap();
+        apply_groups(
+            &mut original,
+            stored_groups(&generated).unwrap().clone(),
+            DroneSaveMode::Update,
+        )
+        .unwrap();
+        let groups = stored_groups(&original).unwrap();
+        assert!(!groups.contains_key("utf8:Hobgoblin"));
+        assert_eq!(groups.len(), 4);
+        assert_eq!(
+            groups["utf8:01 Hobgoblin"]["bytes:droneIDs"],
+            json!(["long:101"])
+        );
+        assert_eq!(
+            groups["utf8:01 Hobgoblin"]["bytes:id"]["tuple"][1],
+            json!("bytes:7")
+        );
+        assert_eq!(groups["utf8:01 Hornet"]["bytes:droneIDs"], json!([]));
+        for key in ["utf8:My flight", "utf8:Ogre"] {
+            assert_eq!(groups[key], stored_groups(&before).unwrap()[key]);
+        }
+        assert_eq!(
+            original[UI_KEY]["bytes:drones_favoriteGroupID_626"]["tuple"][1],
+            groups["utf8:01 Hobgoblin"]["bytes:id"]
+        );
+        assert_eq!(original[UI_KEY]["bytes:unrelated"], json!("utf8:keep"));
+
+        let mut target = before.clone();
+        target[UI_KEY][GROUPS_KEY]["tuple"][1]["utf8:Hobgoblin"]["bytes:droneIDs"] =
+            json!(["long:999"]);
+        apply_group_definitions(&mut target, &original, DroneSaveMode::Update).unwrap();
+        let groups = stored_groups(&target).unwrap();
+        assert_eq!(
+            groups["utf8:01 Hobgoblin"]["bytes:droneIDs"],
+            json!(["long:999"])
+        );
+        assert_eq!(
+            target[UI_KEY]["bytes:drones_favoriteGroupID_626"]["tuple"][1],
+            groups["utf8:01 Hobgoblin"]["bytes:id"]
+        );
+
+        // Turning ordering off renames the same groups instead of duplicating them.
+        presets_into_settings(&mut generated, &catalog, &selected, "{name}").unwrap();
+        apply_groups(
+            &mut target,
+            stored_groups(&generated).unwrap().clone(),
+            DroneSaveMode::Update,
+        )
+        .unwrap();
+        let groups = stored_groups(&target).unwrap();
+        assert_eq!(groups.len(), 4);
+        assert!(!groups.contains_key("utf8:01 Hobgoblin"));
+        assert_eq!(
+            groups["utf8:Hobgoblin"]["bytes:droneIDs"],
+            json!(["long:999"])
+        );
+        assert_eq!(
+            target[UI_KEY]["bytes:drones_favoriteGroupID_626"]["tuple"][1],
+            groups["utf8:Hobgoblin"]["bytes:id"]
+        );
+
+        let mut order = DroneGroupOrder::default();
+        order.move_category(DroneCategory::Light, 7);
+        // Adjacent tokens still recognize names after their old rank changes.
+        let pattern = "{order}{type_short}{name}";
+        presets_into_settings_with_order(&mut generated, &catalog, &selected, pattern, &order)
+            .unwrap();
+        apply_groups(
+            &mut target,
+            stored_groups(&generated).unwrap().clone(),
+            DroneSaveMode::Update,
+        )
+        .unwrap();
+        let groups = stored_groups(&target).unwrap();
+        assert_eq!(groups.len(), 4);
+        assert_eq!(
+            groups["utf8:08LgtHobgoblin"]["bytes:droneIDs"],
+            json!(["long:999"])
+        );
+        assert_eq!(
+            target[UI_KEY]["bytes:drones_favoriteGroupID_626"]["tuple"][1],
+            groups["utf8:08LgtHobgoblin"]["bytes:id"]
+        );
+        assert_eq!(
+            present_in_settings(&target, &catalog, pattern),
+            selected.union(&ids(&["ogre"])).cloned().collect()
+        );
+
+        order.move_category(DroneCategory::Light, -7);
+        presets_into_settings_with_order(&mut generated, &catalog, &selected, pattern, &order)
+            .unwrap();
+        apply_groups(
+            &mut target,
+            stored_groups(&generated).unwrap().clone(),
+            DroneSaveMode::Update,
+        )
+        .unwrap();
+        let groups = stored_groups(&target).unwrap();
+        assert_eq!(groups.len(), 4);
+        assert_eq!(
+            groups["utf8:01LgtHobgoblin"]["bytes:droneIDs"],
+            json!(["long:999"])
+        );
+        assert!(!groups.contains_key("utf8:08LgtHobgoblin"));
     }
 
     #[test]

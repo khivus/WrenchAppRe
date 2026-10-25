@@ -202,6 +202,9 @@ pub struct MainView {
     using_default_sources: bool,
     targets: targets::Targets,
     target_scroll: UniformListScrollHandle,
+    target_motion: crate::scrolling::SmoothScroll,
+    copy_options_scroll: crate::scrolling::SmoothScroll,
+    navigation_scroll: crate::scrolling::SmoothScroll,
     #[cfg(test)]
     target_rows_built: usize,
     copying: bool,
@@ -274,6 +277,11 @@ impl MainView {
             ascending: true,
         };
         let update_error = crate::updater::startup_error();
+        let target_scroll = UniformListScrollHandle::new();
+        let target_motion = crate::scrolling::SmoothScroll {
+            handle: target_scroll.0.borrow().base_handle.clone(),
+            ..Default::default()
+        };
         Self {
             update: updating::UpdateUi {
                 preview: cfg!(feature = "update-preview"),
@@ -295,7 +303,13 @@ impl MainView {
             drone_editors: HashMap::new(),
             using_default_sources,
             targets: targets::Targets::default(),
-            target_scroll: UniformListScrollHandle::new(),
+            target_scroll,
+            target_motion,
+            copy_options_scroll: crate::scrolling::SmoothScroll::default(),
+            navigation_scroll: crate::scrolling::SmoothScroll {
+                horizontal: true,
+                ..Default::default()
+            },
             #[cfg(test)]
             target_rows_built: 0,
             copying: false,

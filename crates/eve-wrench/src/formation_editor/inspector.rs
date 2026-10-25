@@ -316,15 +316,13 @@ impl FormationEditor {
                 .into_any_element(),
         };
 
-        v_flex()
-            .id("inspector")
+        self.inspector_scroll
+            .view("inspector", content, |this| &mut this.inspector_scroll, cx)
             .w(px(360.))
             .flex_none()
             .border_l_1()
             .border_color(cx.theme().border)
-            .overflow_y_scroll()
             .text_sm()
-            .child(content)
     }
 
     fn render_formation_section(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {

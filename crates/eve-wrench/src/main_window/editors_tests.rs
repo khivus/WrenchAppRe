@@ -297,7 +297,7 @@ fn editors_are_inline_after_backups_and_probe_save_offers_section_sync(cx: &mut 
 
 #[gpui_kit::test]
 fn drone_save_prompts_for_append_or_replace_then_sync(cx: &mut TestAppContext) {
-    let (handle, _, files) = setup(cx);
+    let (handle, main, files) = setup(cx);
     cx.update_window(handle, |_, window, cx| window.click("tab-drones", cx))
         .unwrap();
     cx.run_until_parked();
@@ -307,6 +307,9 @@ fn drone_save_prompts_for_append_or_replace_then_sync(cx: &mut TestAppContext) {
         window.click("drone-pattern-input", cx);
         window.press("secondary-a", cx);
         window.input("{type_short} | {name}", cx);
+        let sort = window.find("drone-sort-types").bounds();
+        window.click_at("drone-sort-types", point(px(8.), sort.size.height / 2.), cx);
+        window.click("drone-order-light-down", cx);
         window.click("drone-groups-next", cx);
         window.click("drone-groups-save", cx);
         window.render_frame(cx);
@@ -322,9 +325,43 @@ fn drone_save_prompts_for_append_or_replace_then_sync(cx: &mut TestAppContext) {
         std::collections::HashSet::from(["hobgoblin".to_string()]),
     );
     cx.update_window(handle, |_, window, cx| {
+        let config_file = main.read(cx).store.read(cx).locations().config_file();
+        let config = eve_wrench_core::config::Config::load(&config_file);
+        use eve_wrench_core::drone_groups::DroneCategory;
+        assert_eq!(
+            config.drone_group_order.categories()[..2],
+            [DroneCategory::Medium, DroneCategory::Light]
+        );
+        assert_eq!(
+            config.drone_group_pattern.as_deref(),
+            Some("{order} {type_short} | {name}")
+        );
+        let bytes = std::fs::read(&files.account).unwrap();
+        assert!(
+            bytes
+                .windows(b"02 Lgt | Hobgoblin".len())
+                .any(|window| window == b"02 Lgt | Hobgoblin")
+        );
         window.render_frame(cx);
         window.find("sync-apply");
         window.click("sync-cancel", cx);
+        main.update(cx, |main, cx| {
+            main.drone_editors.clear();
+            cx.notify();
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("drone-groups-next", cx);
+        let medium = window.find("drone-order-medium-up").bounds();
+        let light = window.find("drone-order-light-up").bounds();
+        assert!(
+            medium.left() < light.left(),
+            "saved Medium/Light order must survive reopening"
+        );
     })
     .unwrap();
 }
@@ -337,6 +374,11 @@ fn drone_replace_choice_reaches_every_sync_target(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn drone_append_choice_keeps_existing_sync_target_groups(cx: &mut TestAppContext) {
     sync_saved_drone_mode(cx, eve_wrench_core::drone_groups::DroneSaveMode::Append);
+}
+
+#[gpui_kit::test]
+fn drone_update_names_choice_reaches_every_sync_target(cx: &mut TestAppContext) {
+    sync_saved_drone_mode(cx, eve_wrench_core::drone_groups::DroneSaveMode::Update);
 }
 
 fn sync_saved_drone_mode(
@@ -385,6 +427,7 @@ fn sync_saved_drone_mode(
         window.click(
             match mode {
                 DroneSaveMode::Append => "drone-save-append",
+                DroneSaveMode::Update => "drone-save-update",
                 DroneSaveMode::Replace => "drone-save-replace",
             },
             cx,
@@ -412,7 +455,7 @@ fn sync_saved_drone_mode(
             .unwrap();
         assert_eq!(groups["utf8:Hobgoblin"]["bytes:droneIDs"], json!([]));
         match mode {
-            DroneSaveMode::Append => {
+            DroneSaveMode::Append | DroneSaveMode::Update => {
                 assert_eq!(groups.len(), 2);
                 assert_eq!(
                     groups["utf8:Old group"],

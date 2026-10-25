@@ -4,6 +4,7 @@ mod assets;
 mod formation_editor;
 mod logging;
 mod main_window;
+mod scrolling;
 mod store;
 mod table;
 mod ui;

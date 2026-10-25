@@ -155,21 +155,36 @@ the same server, profile, and account selectors and stays in the main window.
   `{name}[ | {damage}][ | {dps}][ | {speed}]`. Stats are the T2 drone at max
   skills, simulated with DarkFenX's [refine](https://github.com/DarkFenX/refine)
   engine: _Hobgoblin | Therm | 99dps | 4.2km/s_
-  Add `{type}` for Small, Medium, Heavy, Sentry, Special, EWAR, Logistic or
-  Industry; `{type_short}` gives Sml, Med, Hev, Sen, Spec, Ewar, Logi or Ind.
-  For example, `{name} [{type_short}]` produces _Hobgoblin Sml_.
-  Tokens can go in any order: `{type_short} | {name}` produces _Sml | Hobgoblin_.
+  Add `{type}` for Light, Medium, Heavy, Sentry, Special, EWAR, Logistic or
+  Industry; `{type_short}` gives Lgt, Med, Hev, Sen, Spec, Ewar, Logi or Ind.
+  For example, `{name} [{type_short}]` produces _Hobgoblin Lgt_.
+  Tokens can go in any order: `{type_short} | {name}` produces _Lgt | Hobgoblin_.
   Keep `{name}` outside optional `[sections]` so every group has a family name.
-- **Review** every group before saving, then choose **Append missing groups**
-  or **Replace all drone groups**. Append preserves existing groups and drone
+- Enable **Keep drone types together in EVE** to prefix names with `{order}`:
+  `01` Light, `02` Medium, `03` Heavy, `04` Sentry, `05` Special, `06` EWAR,
+  `07` Logistics, `08` Industry. EVE's alphabetical sorting then keeps the types in
+  this sequence, regardless of the drone family names. Use the up/down arrows
+  under **Type order** to arrange the categories however you prefer; their
+  prefixes and previews update immediately. Saving groups remembers the order
+  for future sessions. **Default order** restores the sequence above.
+- **Review** every group before saving, then choose **Update names & add missing**,
+  **Append missing groups**, or **Replace all drone groups**. Update names applies
+  the pattern to recognized groups, preserving their drones and favorites,
+  keeps custom and unselected groups, and adds missing groups empty.
+  Append preserves existing groups and drone
   memberships, adding only missing names. Replace deletes every previous drone
   group and membership and creates only the selected empty groups. Other account
   settings are preserved. Close EVE before saving.
 - After saving, choose whether to sync group definitions and favorites to other
-  accounts. Sync follows the same **Append** or **Replace** choice: Append keeps
+  accounts. Sync follows the same save choice: **Update names** keeps each
+  target's own drone items and favorites while applying the saved group names;
+  Append keeps
   existing target groups and memberships; Replace removes them and installs only
   the saved empty groups. Unrelated settings stay unchanged. Automatic backups
   follow **Back up before changes**.
+
+The drone editor, **What to copy**, target list, probe editor panes, settings,
+import and sync lists have draggable scrollbars and smooth mouse-wheel scrolling.
 
 The app checks upstream for newer drone catalog data in the background and
 keeps a bundled catalog available offline. Catalog refreshes do not install
@@ -406,12 +421,10 @@ Translations live in `crates/eve-wrench/locales` (English and Simplified Chinese
 `tools/drone-catalog`, which downloads the SDE and simulates every drone with
 refine. The tool is not part of the workspace: refine needs the nightly pinned in
 its `rust-toolchain.toml`, and it is AGPL licensed, so it is never linked into
-the app. Run `cargo run --release` in that folder to regenerate the file. The
-_Drone catalog_ workflow checks daily for a new SDE build and opens a pull
-request with the regenerated file. This fork fetches runtime catalog updates
-from the original `eve-wrench/eve-wrench-app` repository's `main` branch.
-It needs _Allow GitHub Actions to create and approve pull requests_ enabled in
-the repository's Actions settings.
+the app. Run `cargo run --release` in that folder to regenerate the file manually.
+This fork has no scheduled catalog generation workflow. It fetches runtime
+catalog updates from the original `eve-wrench/eve-wrench-app` repository's `main`
+branch.
 
 CI runs `cargo fmt`, `clippy -D warnings`, and `test` on every push and PR.
 
