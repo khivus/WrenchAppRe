@@ -17,9 +17,11 @@
 // resting on a right Neocom flush with the screen edge, then adds the Neocom
 // back when it places them. `Neocom::place` and `Neocom::store` do the same.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
+use std::io::Write;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 
@@ -391,6 +393,178 @@ pub fn write_window_layout(
     let bytes = encode_settings_json(&json, had_crc)?;
     fs::write(path, bytes).map_err(|e| format!("Failed to write settings file: {}", e))
 }
+
+/// Explicitly forget selected saved rectangles. Other window properties and
+/// stack links are retained. Resets always make a backup and replace the file
+/// from a fully written sibling file; an absent rect in an ordinary edit never
+/// implicitly deletes anything.
+pub fn write_window_layout_with_geometry_resets(
+    path: &Path,
+    layout: &[WindowState],
+    reset_keys: &HashSet<String>,
+    expected_layout: &[WindowState],
+    backup: bool,
+) -> Result<(), String> {
+    if reset_keys.is_empty() {
+        return write_window_layout(path, layout, backup);
+    }
+    if crate::scan::parse_core_filename(path)?.0 != crate::SettingsKind::Char {
+        return Err("Window geometry can only be reset in character settings".into());
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+    if !metadata.file_type().is_file() {
+        return Err("Window geometry reset requires a regular settings file".into());
+    }
+    if metadata.permissions().readonly() {
+        return Err("The settings file is read-only; geometry reset cancelled".into());
+    }
+    let original = fs::read(path).map_err(|e| e.to_string())?;
+    let decoded = blue_marshal::decode(&original).map_err(|e| e.to_string())?;
+    let mut root = blue_marshal::to_json(&decoded.value);
+    let current = layout_from_settings(&root);
+    if current != expected_layout {
+        return Err(
+            "The window layout changed on disk. Reload before resetting position and size.".into(),
+        );
+    }
+    for key in reset_keys {
+        if !current.iter().any(|w| &w.key == key)
+            || !layout.iter().any(|w| &w.key == key && w.rect.is_none())
+        {
+            return Err("A geometry reset must refer to an existing window with its draft rectangle cleared".into());
+        }
+        if root
+            .get(WINDOWS_KEY)
+            .and_then(Value::as_object)
+            .and_then(|windows| section(windows, RECTS_KEY))
+            .and_then(|rects| rects.get(key))
+            .is_some_and(|value| parse_rect(value).is_none())
+        {
+            return Err("Unsupported geometry for a selected window; reset cancelled".into());
+        }
+    }
+    let mut draft_keys = HashSet::new();
+    if layout.iter().any(|w| !draft_keys.insert(&w.key)) {
+        return Err("Duplicate window entries; geometry reset cancelled".into());
+    }
+    for window in &current {
+        if window
+            .stack
+            .as_ref()
+            .is_some_and(|stack| reset_keys.contains(stack))
+            && !reset_keys.contains(&window.key)
+        {
+            return Err("Reset a stack's position and size together with all of its tabs".into());
+        }
+        if reset_keys.contains(&window.key)
+            && window
+                .stack
+                .as_ref()
+                .is_some_and(|stack| !reset_keys.contains(stack))
+        {
+            return Err("Reset the containing stack instead of an individual tab".into());
+        }
+    }
+    if let Some(record) = root.get_mut(WINDOWS_KEY).and_then(|w| w.get_mut(RECTS_KEY)) {
+        let parts = record
+            .get_mut("tuple")
+            .and_then(Value::as_array_mut)
+            .ok_or("Unexpected window geometry record; reset cancelled")?;
+        let rects = parts
+            .get_mut(1)
+            .and_then(Value::as_object_mut)
+            .ok_or("Unexpected window geometry map; reset cancelled")?;
+        let count = rects.len();
+        rects.retain(|key, _| !reset_keys.contains(key));
+        if count != rects.len() {
+            parts[0] = json!(format!("long:{}", filetime_now()));
+        }
+    }
+    // Apply only actual edits. Unchanged flags, styles and unknown stored
+    // values must not be normalized or rewritten as a side effect of a reset.
+    let windows = root
+        .get_mut(WINDOWS_KEY)
+        .and_then(Value::as_object_mut)
+        .ok_or("Unexpected windows section; reset cancelled")?;
+    let now = format!("long:{}", filetime_now());
+    let previous = |w: &WindowState| current.iter().find(|old| old.key == w.key);
+    update_section(windows, RECTS_KEY, &now, layout.iter().filter_map(|w| {
+        let rect = w.rect?;
+        (previous(w).and_then(|old| old.rect) != Some(rect)).then(|| (w.key.clone(),
+            json!({"tuple": [rect.x, rect.y, rect.width, rect.height, rect.screen_width, rect.screen_height]})))
+    }));
+    for flag in Flag::ALL {
+        update_section(
+            windows,
+            flag.key(),
+            &now,
+            layout
+                .iter()
+                .filter(|w| previous(w).is_none_or(|old| flag.get(old) != flag.get(w)))
+                .map(|w| (w.key.clone(), json!(flag.get(w)))),
+        );
+    }
+    for style in Style::ALL {
+        update_section(
+            windows,
+            style.key(),
+            &now,
+            layout.iter().filter_map(|w| {
+                let value = style.get(w)?;
+                (previous(w).and_then(|old| style.get(old)) != Some(value))
+                    .then(|| (w.key.clone(), json!(value)))
+            }),
+        );
+    }
+    let bytes = encode_settings_json(&root, decoded.had_crc)?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_nanos();
+    let filename = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("Invalid settings filename")?;
+    let staging = path.with_file_name(format!(
+        ".{filename}.wrench-reset-{}-{nonce}.tmp",
+        std::process::id()
+    ));
+    let mut staged = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staging)
+        .map_err(|e| format!("Could not prepare geometry reset: {e}"))?;
+    let result = (|| {
+        staged.write_all(&bytes).map_err(|e| e.to_string())?;
+        staged.sync_all().map_err(|e| e.to_string())?;
+        fs::set_permissions(&staging, metadata.permissions()).map_err(|e| e.to_string())?;
+        drop(staged);
+        let check_original = || -> Result<(), String> {
+            if fs::read(path).map_err(|e| e.to_string())? != original {
+                return Err(
+                    "The settings file changed while saving. Reload before resetting geometry."
+                        .into(),
+                );
+            }
+            Ok(())
+        };
+        check_original()?;
+        let backup = auto_backup(path, &format!("pre-window-geometry-reset-{nonce}"))?;
+        if fs::read(&backup).map_err(|e| e.to_string())? != original {
+            return Err("The settings file changed while backing it up; reset cancelled".into());
+        }
+        check_original()?;
+        fs::rename(&staging, path)
+            .map_err(|e| format!("Could not replace settings file; the original was kept: {e}"))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&staging);
+    }
+    result
+}
+
+#[cfg(test)]
+mod reset_tests;
 
 #[cfg(test)]
 mod tests {

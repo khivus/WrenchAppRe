@@ -3,7 +3,9 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use rust_i18n::t;
@@ -77,6 +79,7 @@ impl LayoutEditor {
                 })
                 .selected(hidden)
                 .toggled(hidden)
+                .disabled(window.rect.is_none())
                 .tooltip(if hidden {
                     t!("layoutEditor.showInPreview").to_string()
                 } else {
@@ -101,7 +104,7 @@ impl LayoutEditor {
         let listed: Vec<&WindowState> = self
             .windows
             .iter()
-            .filter(|w| model::on_canvas(w, &self.windows) && self.in_location(w))
+            .filter(|w| model::listable(w, &self.windows) && self.in_location(w))
             .collect();
 
         let mut sections: Vec<Div> = Vec::new();
@@ -255,10 +258,49 @@ impl LayoutEditor {
                                                     .text_color(muted)
                                                     .child(field.label()),
                                             )
-                                            .child(div().flex_1().child(Input::new(input).small()))
+                                            .child(
+                                                div().flex_1().child(
+                                                    Input::new(input).small().disabled(
+                                                        window.rect.is_none() || self.saving,
+                                                    ),
+                                                ),
+                                            )
                                     },
                                 ),
                             ))
+                            .child(
+                                Button::new("layout-reset-geometry")
+                                    .outline()
+                                    .small()
+                                    .w_full()
+                                    .label(t!("layoutEditor.resetGeometry").to_string())
+                                    .disabled(
+                                        self.saving
+                                            || self.disk_changed
+                                            || (window.rect.is_none()
+                                                && !model::members(&self.windows, &window.key)
+                                                    .iter()
+                                                    .any(|w| w.rect.is_some())),
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.reset_selected_geometry(window, cx)
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(t!("layoutEditor.resetGeometryHint").to_string()),
+                            )
+                            .when(window.rect.is_none(), |this| {
+                                this.child(div().text_xs().text_color(ui::amber(cx)).child(
+                                    if self.geometry_resets.contains(&window.key) {
+                                        t!("layoutEditor.geometryResetPending").to_string()
+                                    } else {
+                                        t!("layoutEditor.defaultGeometry").to_string()
+                                    },
+                                ))
+                            })
                             .when_some(saved_on, |this, rect| {
                                 this.child(
                                     div().text_xs().text_color(ui::amber(cx)).child(

@@ -120,6 +120,7 @@ pub struct LayoutEditor {
     list_scroll: crate::scrolling::SmoothScroll,
     inspector_scroll: crate::scrolling::SmoothScroll,
     saved: Vec<WindowState>,
+    geometry_resets: HashSet<String>,
     neocom: Neocom,
     compact_default: bool,
     history: History,
@@ -180,6 +181,7 @@ impl LayoutEditor {
             list_scroll: Default::default(),
             inspector_scroll: Default::default(),
             saved: Vec::new(),
+            geometry_resets: HashSet::new(),
             neocom: Neocom::default(),
             compact_default: false,
             history: History::default(),
@@ -204,7 +206,7 @@ impl LayoutEditor {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.windows != self.saved
+        self.windows != self.saved || !self.geometry_resets.is_empty()
     }
 
     pub fn has_pending_edits(&self) -> bool {
@@ -215,6 +217,7 @@ impl LayoutEditor {
         Snapshot {
             windows: self.windows.clone(),
             selected: self.selected.clone(),
+            geometry_resets: self.geometry_resets.clone(),
         }
     }
 
@@ -247,6 +250,19 @@ impl LayoutEditor {
         model::set_rect(&mut self.windows, &key, rect);
     }
 
+    fn reset_selected_geometry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving || self.disk_changed {
+            return;
+        }
+        let Some(key) = self.selected.clone() else {
+            return;
+        };
+        self.edit(window, cx, |this| {
+            this.geometry_resets
+                .extend(model::reset_geometry(&mut this.windows, &key));
+        });
+    }
+
     fn update_selected(&mut self, f: impl FnOnce(&mut WindowState)) {
         let Some(key) = self.selected.clone() else {
             return;
@@ -273,6 +289,7 @@ impl LayoutEditor {
                         this.compact_default = layout.compact_default;
                         this.saved = layout.windows.clone();
                         this.windows = layout.windows;
+                        this.geometry_resets.clear();
                         this.history.clear();
                         this.state = LoadState::Ready;
                     }
@@ -367,6 +384,7 @@ impl LayoutEditor {
     fn restore(&mut self, snapshot: Snapshot, window: &mut Window, cx: &mut Context<Self>) {
         self.windows = snapshot.windows;
         self.selected = snapshot.selected;
+        self.geometry_resets = snapshot.geometry_resets;
         self.after_structural_change(window, cx);
     }
 
@@ -389,10 +407,16 @@ impl LayoutEditor {
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.edit(window, cx, |this| this.windows = this.saved.clone());
+        self.edit(window, cx, |this| {
+            this.windows = this.saved.clone();
+            this.geometry_resets.clear();
+        });
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving || (self.disk_changed && !self.geometry_resets.is_empty()) {
+            return;
+        }
         let shown = self.windows.clone();
         let neocom = self.neocom;
         let payload: Vec<WindowState> = shown
@@ -404,6 +428,18 @@ impl LayoutEditor {
             })
             .collect();
         let backup = self.store.read(cx).config().auto_backup;
+        let expected: Vec<_> = self
+            .saved
+            .iter()
+            .cloned()
+            .map(|mut w| {
+                w.rect = w.rect.map(|r| neocom.store(r));
+                w
+            })
+            .collect();
+        let resets = self.geometry_resets.clone();
+        let saved_resets = resets.clone();
+        let had_resets = !resets.is_empty();
         let path = self.file_path.clone();
         self.saving = true;
         cx.notify();
@@ -411,7 +447,9 @@ impl LayoutEditor {
         cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
-                    window_layout::write_window_layout(&path, &payload, backup)
+                    window_layout::write_window_layout_with_geometry_resets(
+                        &path, &payload, &resets, &expected, backup,
+                    )
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
@@ -419,6 +457,8 @@ impl LayoutEditor {
                 match result {
                     Ok(()) => {
                         this.saved = shown;
+                        this.geometry_resets
+                            .retain(|key| !saved_resets.contains(key));
                         this.disk_changed = false;
                         ui::notify_success(
                             t!("layoutEditor.saved"),
@@ -427,11 +467,20 @@ impl LayoutEditor {
                             cx,
                         );
                         this.store.update(cx, |store, cx| store.reload(cx));
-                        cx.emit(LayoutSaved {
-                            path: this.file_path.to_string_lossy().into_owned(),
-                        });
+                        // A geometry reset is local to this character; do not offer
+                        // the ordinary whole-layout sync for this save.
+                        if !had_resets {
+                            cx.emit(LayoutSaved {
+                                path: this.file_path.to_string_lossy().into_owned(),
+                            });
+                        }
                     }
-                    Err(e) => ui::notify_error(t!("layoutEditor.saveFailed"), e, window, cx),
+                    Err(e) => {
+                        ui::notify_error(t!("layoutEditor.saveFailed"), e, window, cx);
+                        if had_resets {
+                            this.on_disk_changed(window, cx);
+                        }
+                    }
                 }
                 cx.notify();
             })
@@ -502,7 +551,11 @@ impl LayoutEditor {
                     .min_w(px(120.))
                     .label(t!("layoutEditor.save").to_string())
                     .loading(self.saving)
-                    .disabled(self.saving || !dirty)
+                    .disabled(
+                        self.saving
+                            || !dirty
+                            || (self.disk_changed && !self.geometry_resets.is_empty()),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| this.save(window, cx))),
             )
     }

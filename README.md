@@ -252,6 +252,12 @@ screen they were saved on. Scroll to zoom and drag the background to pan.
 - Use **Hide in preview** or the eye button in the window list to temporarily
   remove a window from the canvas. Click again to show it; saved EVE settings
   are unaffected.
+- **Reset position and size** stages removal of a window's saved geometry.
+  Stack tabs reset together, keeping their links and other state. Undo or Reset
+  can cancel the draft. Log the character out before saving. A reset save always
+  creates a backup, even with automatic backups disabled, and refuses a changed
+  layout on disk. It applies only to the selected character. The canvas preview
+  returns after EVE saves new geometry when the window opens again.
 - The window list is grouped by purpose (in space, navigation, fleet and chat,
   inventory, market, character)
 

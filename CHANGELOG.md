@@ -10,6 +10,11 @@
 
 ### Added
 
+- Add **Reset position and size** for a window or a complete stack, with undo,
+  mandatory backups, checks for external edits, and replacement from a fully
+  written temporary file. It removes only saved geometry; flags, styles, stack
+  links and other settings are preserved. Reset saves apply to the current
+  character and do not offer whole-layout sync.
 - Add a **Hide in preview** toggle and per-window eye buttons in the layout
   editor. Hidden previews stay listed and do not change saved EVE settings.
 - Add a **Confirmations** tab with searchable dialog text, category and suppressed

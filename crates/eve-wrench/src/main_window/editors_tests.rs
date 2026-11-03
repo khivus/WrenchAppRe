@@ -703,3 +703,127 @@ fn layout_tab_preserves_drafts_blocks_updates_and_syncs_only_characters(cx: &mut
     }
     cx.update(|cx| assert_eq!(cx.windows().len(), 1));
 }
+
+#[gpui_kit::test]
+fn geometry_reset_is_undoable_backs_up_and_preserves_stack_state_without_syncing(
+    cx: &mut TestAppContext,
+) {
+    let (handle, main, files) = setup(cx);
+    let path = std::path::Path::new(&files.character);
+    let decoded = blue_marshal::decode(&std::fs::read(path).unwrap()).unwrap();
+    let mut root = blue_marshal::to_json(&decoded.value);
+    root["bytes:windows"] = json!({
+        "bytes:windowSizesAndPositions_1": {"tuple": ["long:1", {
+            "bytes:overview": {"tuple": [100, 100, 300, 400, 1920, 1080]},
+            "bytes:548": {"tuple": [500, 500, 400, 300, 1920, 1080]},
+            "utf8:chatchannel_fleet": {"tuple": [500, 500, 400, 300, 1920, 1080]}
+        }]},
+        "bytes:openWindows": {"tuple": ["long:2", {"bytes:overview": true, "bytes:548": true, "utf8:chatchannel_fleet": true}]},
+        "bytes:lockedWindows": {"tuple": ["long:3", {"bytes:overview": true}]},
+        "bytes:compactWindows": {"tuple": ["long:4", {"bytes:548": true}]},
+        "bytes:stacksWindows": {"tuple": ["long:5", {"utf8:chatchannel_fleet": "bytes:548"}]}
+    });
+    let original = blue_marshal::encode(
+        &blue_marshal::from_json(&root).unwrap(),
+        &blue_marshal::EncodeOptions {
+            checksum: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    std::fs::write(path, &original).unwrap();
+    cx.update(|cx| {
+        Store::global(cx).update(cx, |store, cx| {
+            store
+                .update_config(cx, |config| config.auto_backup = false)
+                .unwrap()
+        })
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.click("tab-window-layout", cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("list-bytes:overview", cx);
+        window.render_frame(cx);
+        window.click("layout-reset-geometry", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("window-bytes:overview").is_none());
+        window.find("list-bytes:overview");
+        assert!(
+            main.read(cx).layout_editors[&files.character]
+                .read(cx)
+                .is_dirty()
+        );
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            original,
+            "reset is only a draft until Save"
+        );
+        window.click("layout-undo", cx);
+        window.render_frame(cx);
+        window.find("window-bytes:overview");
+        assert!(
+            !main.read(cx).layout_editors[&files.character]
+                .read(cx)
+                .is_dirty()
+        );
+        window.click("layout-redo", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("window-bytes:overview").is_none());
+        window.click("layout-reset", cx);
+        window.render_frame(cx);
+        window.find("window-bytes:overview");
+        assert!(
+            !main.read(cx).layout_editors[&files.character]
+                .read(cx)
+                .is_dirty()
+        );
+        window.click("list-bytes:548", cx);
+        window.render_frame(cx);
+        window.click("layout-reset-geometry", cx);
+        window.render_frame(cx);
+        assert!(window.try_find("window-bytes:548").is_none());
+        window.find("list-bytes:548");
+        window.find("window-bytes:overview");
+        assert_eq!(std::fs::read(path).unwrap(), original);
+        window.click("layout-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let decoded = blue_marshal::decode(&std::fs::read(path).unwrap()).unwrap();
+    assert!(decoded.had_crc);
+    let mut actual = blue_marshal::to_json(&decoded.value);
+    let mut wanted = root.clone();
+    let geometry = wanted["bytes:windows"]["bytes:windowSizesAndPositions_1"]["tuple"][1]
+        .as_object_mut()
+        .unwrap();
+    geometry.remove("bytes:548");
+    geometry.remove("utf8:chatchannel_fleet");
+    actual["bytes:windows"]["bytes:windowSizesAndPositions_1"]["tuple"][0] = json!("long:1");
+    assert_eq!(
+        actual, wanted,
+        "only the stack family's geometry is removed"
+    );
+    let backups: Vec<_> = std::fs::read_dir(path.parent().unwrap().join("backups"))
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(backups.len(), 1);
+    assert_eq!(std::fs::read(&backups[0]).unwrap(), original);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(
+            window.try_find("sync-apply").is_none(),
+            "reset saves must not offer whole-layout copying to other characters"
+        );
+        window.find("list-bytes:548");
+        assert!(
+            !main.read(cx).layout_editors[&files.character]
+                .read(cx)
+                .has_pending_edits()
+        );
+    })
+    .unwrap();
+}

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use eve_wrench_core::window_layout::{Neocom, NeocomSide, WindowRect, WindowState};
 use gpui_kit::assets::IconName;
@@ -101,9 +101,11 @@ pub fn members<'a>(windows: &'a [WindowState], stack: &str) -> Vec<&'a WindowSta
 // Windows drawn on the canvas: everything with a rect that isn't a tab inside
 // a stack. Stacks without tabs are leftovers the client no longer shows.
 pub fn on_canvas(window: &WindowState, windows: &[WindowState]) -> bool {
-    window.rect.is_some()
-        && window.stack.is_none()
-        && (!window.is_stack() || !members(windows, &window.key).is_empty())
+    window.rect.is_some() && listable(window, windows)
+}
+
+pub fn listable(window: &WindowState, windows: &[WindowState]) -> bool {
+    window.stack.is_none() && (!window.is_stack() || !members(windows, &window.key).is_empty())
 }
 
 // Groups for the window list, in list order.
@@ -418,6 +420,7 @@ pub fn drag_rect(
 pub struct Snapshot {
     pub windows: Vec<WindowState>,
     pub selected: Option<String>,
+    pub geometry_resets: HashSet<String>,
 }
 
 pub type History = crate::history::History<Snapshot>;
@@ -430,6 +433,32 @@ pub fn set_rect(windows: &mut [WindowState], key: &str, rect: WindowRect) {
             window.rect = Some(rect);
         }
     }
+}
+
+// Forget geometry for a complete stack family without changing its links or flags.
+pub fn reset_geometry(windows: &mut [WindowState], key: &str) -> HashSet<String> {
+    let mut keys = HashSet::from([key.to_string()]);
+    loop {
+        let before = keys.len();
+        for window in windows.iter() {
+            if window
+                .stack
+                .as_ref()
+                .is_some_and(|stack| keys.contains(stack))
+            {
+                keys.insert(window.key.clone());
+            }
+        }
+        if keys.len() == before {
+            break;
+        }
+    }
+    for window in windows {
+        if keys.contains(&window.key) {
+            window.rect = None;
+        }
+    }
+    keys
 }
 
 #[cfg(test)]
