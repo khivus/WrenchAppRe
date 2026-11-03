@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Keep the Confirmations tab responsive with all dialogs shown by virtualizing
+  variable-height rows and caching sorted dialog text, previews, and search data.
+  Expanded text, bulk actions, smooth scrolling, and draggable scrollbars remain available.
+
 ### Added
 
 - Add a **Confirmations** tab with searchable dialog text, category and suppressed

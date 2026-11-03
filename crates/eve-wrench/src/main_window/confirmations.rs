@@ -1,8 +1,12 @@
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::Arc;
 
-use eve_wrench_core::confirmations::{self, ConfirmationKind};
+use eve_wrench_core::confirmations::{self, Confirmation, ConfirmationKind};
 use gpui_kit::assets::IconName;
+use gpui_kit::base::{Scrollbar, ScrollbarMode};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::switch::Switch;
@@ -84,9 +88,43 @@ fn language() -> &'static str {
 struct Row {
     key: String,
     section: Section,
-    title: String,
-    body: Option<String>,
+    title: SharedString,
+    body: Option<SharedString>,
+    preview: Option<SharedString>,
+    search_text: String,
     answer: Option<u8>,
+}
+
+impl Row {
+    fn new(
+        key: String,
+        section: Section,
+        title: String,
+        body: Option<String>,
+        answer: Option<u8>,
+    ) -> Self {
+        let preview = body
+            .as_ref()
+            .map(|body| body.split_whitespace().collect::<Vec<_>>().join(" ").into());
+        let search_text =
+            format!("{key}\n{title}\n{}", body.as_deref().unwrap_or_default()).to_lowercase();
+        Self {
+            key,
+            section,
+            title: title.into(),
+            body: body.map(Into::into),
+            preview,
+            search_text,
+            answer,
+        }
+    }
+}
+
+struct RowCache {
+    catalog: Arc<[Confirmation]>,
+    language: &'static str,
+    stored: HashSet<String>,
+    rows: Rc<Vec<Row>>,
 }
 
 pub(super) struct ConfirmationsEditor {
@@ -104,7 +142,15 @@ pub(super) struct ConfirmationsEditor {
     saving: bool,
     disk_changed: bool,
     error: Option<String>,
-    list_scroll: crate::scrolling::SmoothScroll,
+    list_scroll: crate::scrolling::SmoothScroll<ListState>,
+    row_cache: Option<RowCache>,
+    listed_rows: Rc<Vec<Row>>,
+    visible_rows: Rc<Vec<usize>>,
+    list_hinted_width: Rc<Cell<Option<Pixels>>>,
+    #[cfg(test)]
+    rows_rendered: usize,
+    #[cfg(test)]
+    row_cache_builds: usize,
     sidebar_scroll: crate::scrolling::SmoothScroll,
     search: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
@@ -143,7 +189,19 @@ impl ConfirmationsEditor {
             saving: false,
             disk_changed: false,
             error: None,
-            list_scroll: Default::default(),
+            list_scroll: crate::scrolling::SmoothScroll::new(ListState::new(
+                0,
+                ListAlignment::Top,
+                px(120.),
+            )),
+            row_cache: None,
+            listed_rows: Rc::new(Vec::new()),
+            visible_rows: Rc::new(Vec::new()),
+            list_hinted_width: Rc::new(Cell::new(None)),
+            #[cfg(test)]
+            rows_rendered: 0,
+            #[cfg(test)]
+            row_cache_builds: 0,
             sidebar_scroll: Default::default(),
         };
         editor.load(window, cx);
@@ -257,34 +315,62 @@ impl ConfirmationsEditor {
 
     // Dialogs without a known answer can't be suppressed from here, only
     // cleared and restored if the file already has them.
-    fn rows(&self) -> Vec<Row> {
+    fn rows(&mut self) -> Rc<Vec<Row>> {
         let catalog = confirmations::catalog();
         let language = language();
+        if let Some(cache) = &self.row_cache
+            && Arc::ptr_eq(&cache.catalog, &catalog)
+            && cache.language == language
+            && cache.stored == self.stored
+        {
+            return cache.rows.clone();
+        }
         let mut rows: Vec<Row> = catalog
             .iter()
             .filter(|d| d.can_suppress() || self.stored.contains(&d.key))
-            .map(|d| Row {
-                key: d.key.clone(),
-                section: Section::Kind(d.kind),
-                title: d.title(language).to_string(),
-                body: d.body(language).map(str::to_string),
-                answer: d.answer,
+            .map(|d| {
+                Row::new(
+                    d.key.clone(),
+                    Section::Kind(d.kind),
+                    d.title(language).to_string(),
+                    d.body(language).map(str::to_string),
+                    d.answer,
+                )
             })
             .collect();
         rows.extend(
             self.stored
                 .iter()
                 .filter(|key| !catalog.iter().any(|d| &d.key == *key))
-                .map(|key| Row {
-                    key: key.clone(),
-                    section: Section::Other,
-                    title: key.clone(),
-                    body: None,
-                    answer: None,
-                }),
+                .map(|key| Row::new(key.clone(), Section::Other, key.clone(), None, None)),
         );
         rows.sort_by_cached_key(|r| r.title.to_lowercase());
+        let rows = Rc::new(rows);
+        self.row_cache = Some(RowCache {
+            catalog,
+            language,
+            stored: self.stored.clone(),
+            rows: rows.clone(),
+        });
+        #[cfg(test)]
+        {
+            self.row_cache_builds += 1;
+        }
         rows
+    }
+
+    fn toggle_expanded(&mut self, key: &str, cx: &mut Context<Self>) {
+        if !self.expanded.remove(key) {
+            self.expanded.insert(key.to_string());
+        }
+        if let Some(index) = self
+            .visible_rows
+            .iter()
+            .position(|&index| self.listed_rows[index].key == key)
+        {
+            self.list_scroll.handle.remeasure_items(index..index + 1);
+        }
+        cx.notify();
     }
 
     fn set(&mut self, key: &str, on: bool, cx: &mut Context<Self>) {
@@ -413,15 +499,11 @@ impl ConfirmationsEditor {
         };
         let (row_key, switch_key) = (row.key.clone(), row.key.clone());
         let expanded = self.expanded.contains(&row.key);
-        // Collapsed rows show the text as one line
-        let preview = row
-            .body
-            .as_ref()
-            .map(|b| b.split_whitespace().collect::<Vec<_>>().join(" "));
 
         h_flex()
             .id(SharedString::from(format!("confirmation-{}", row.key)))
             .test_support()
+            .w_full()
             .flex_none()
             .items_start()
             .gap_3()
@@ -450,15 +532,16 @@ impl ConfirmationsEditor {
                             .text_color(if on { fg } else { fg.opacity(0.85) })
                             .child(row.title.clone()),
                     )
-                    .map(|this| match (expanded, row.body.clone(), preview) {
-                        (true, Some(body), _) => {
-                            this.child(div().text_xs().text_color(muted).child(body))
-                        }
-                        (false, _, Some(preview)) => {
-                            this.child(div().text_xs().truncate().text_color(muted).child(preview))
-                        }
-                        _ => this,
-                    })
+                    .map(
+                        |this| match (expanded, row.body.clone(), row.preview.clone()) {
+                            (true, Some(body), _) => {
+                                this.child(div().text_xs().text_color(muted).child(body))
+                            }
+                            (false, _, Some(preview)) => this
+                                .child(div().text_xs().truncate().text_color(muted).child(preview)),
+                            _ => this,
+                        },
+                    )
                     .when(expanded, |this| {
                         this.child(
                             div()
@@ -500,20 +583,18 @@ impl ConfirmationsEditor {
                     ),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
-                if !this.expanded.remove(&row_key) {
-                    this.expanded.insert(row_key.clone());
-                }
-                cx.notify();
+                this.toggle_expanded(&row_key, cx);
             }))
     }
 
     // Turns every row in view on or off: the group, search and filter decide
     // what that is.
-    fn set_all(&mut self, keys: &[String], on: bool, cx: &mut Context<Self>) {
+    fn set_all(&mut self, rows: &[Row], indices: &[usize], on: bool, cx: &mut Context<Self>) {
         if self.loading || self.saving || self.error.is_some() {
             return;
         }
-        for key in keys {
+        for &index in indices {
+            let key = &rows[index].key;
             if on {
                 self.selected.insert(key.clone());
             } else {
@@ -523,20 +604,31 @@ impl ConfirmationsEditor {
         cx.notify();
     }
 
-    fn render_list(&self, rows: &[Row], cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn render_list(
+        &mut self,
+        rows: &Rc<Vec<Row>>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
         let query = self.search.read(cx).value().trim().to_lowercase();
-        let visible: Vec<&Row> = rows
+        let visible: Vec<usize> = rows
             .iter()
-            .filter(|r| self.section.is_none_or(|s| r.section == s))
-            .filter(|r| !self.suppressed_only || self.selected.contains(&r.key))
-            .filter(|r| {
-                query.is_empty()
-                    || [Some(&r.key), Some(&r.title), r.body.as_ref()]
-                        .into_iter()
-                        .flatten()
-                        .any(|text| text.to_lowercase().contains(&query))
-            })
+            .enumerate()
+            .filter(|(_, r)| self.section.is_none_or(|s| r.section == s))
+            .filter(|(_, r)| !self.suppressed_only || self.selected.contains(&r.key))
+            .filter(|(_, r)| query.is_empty() || r.search_text.contains(&query))
+            .map(|(index, _)| index)
             .collect();
+        if !Rc::ptr_eq(rows, &self.listed_rows) || *self.visible_rows != visible {
+            self.listed_rows = rows.clone();
+            self.visible_rows = Rc::new(visible);
+            self.list_hinted_width.set(None);
+            // Collapsed rows have two text lines. The hint gives an accurate
+            // scrollbar immediately without laying out the whole catalog.
+            self.list_scroll
+                .handle
+                .reset_with_uniform_height(self.visible_rows.len(), px(65.));
+            self.list_scroll.reset();
+        }
         let muted = cx.theme().muted_foreground;
 
         let toolbar = h_flex()
@@ -566,9 +658,14 @@ impl ConfirmationsEditor {
                     })),
             );
 
-        let keys: Vec<String> = visible.iter().map(|r| r.key.clone()).collect();
-        let on = keys.iter().filter(|k| self.selected.contains(*k)).count();
-        let (on_keys, off_keys) = (keys.clone(), keys.clone());
+        let count = self.visible_rows.len();
+        let on = self
+            .visible_rows
+            .iter()
+            .filter(|&&index| self.selected.contains(&rows[index].key))
+            .count();
+        let (on_rows, off_rows) = (rows.clone(), rows.clone());
+        let (on_indices, off_indices) = (self.visible_rows.clone(), self.visible_rows.clone());
         let bulk = h_flex()
             .flex_none()
             .gap_1()
@@ -581,15 +678,17 @@ impl ConfirmationsEditor {
             .child(
                 div()
                     .flex_1()
-                    .child(t!("confirmations.shown", on = on, count = keys.len()).to_string()),
+                    .child(t!("confirmations.shown", on = on, count = count).to_string()),
             )
             .child(
                 Button::new("confirmations-all-on")
                     .ghost()
                     .xsmall()
                     .label(t!("confirmations.allOn").to_string())
-                    .disabled(on == keys.len())
-                    .on_click(cx.listener(move |this, _, _, cx| this.set_all(&on_keys, true, cx))),
+                    .disabled(on == count)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_all(&on_rows, &on_indices, true, cx)
+                    })),
             )
             .child(
                 Button::new("confirmations-all-off")
@@ -597,12 +696,12 @@ impl ConfirmationsEditor {
                     .xsmall()
                     .label(t!("confirmations.allOff").to_string())
                     .disabled(on == 0)
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.set_all(&off_keys, false, cx)),
-                    ),
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_all(&off_rows, &off_indices, false, cx)
+                    })),
             );
 
-        let list = if visible.is_empty() {
+        let list = if self.visible_rows.is_empty() {
             v_flex()
                 .flex_1()
                 .items_center()
@@ -614,10 +713,41 @@ impl ConfirmationsEditor {
                 .child(t!("confirmations.empty").to_string())
                 .into_any_element()
         } else {
-            v_flex()
-                .children(visible.into_iter().map(|r| self.render_row(r, cx)))
-                .into_any_element()
+            let rows = rows.clone();
+            let visible = self.visible_rows.clone();
+            let view = cx.entity();
+            list(self.list_scroll.handle.clone(), move |index, _, cx| {
+                view.update(cx, |this, cx| {
+                    #[cfg(test)]
+                    {
+                        this.rows_rendered += 1;
+                    }
+                    this.render_row(&rows[visible[index]], cx)
+                        .into_any_element()
+                })
+            })
+            .size_full()
+            .min_h_0()
+            .pr_4()
+            .into_any_element()
         };
+
+        let list_state = self.list_scroll.handle.clone();
+        let hinted_width = self.list_hinted_width.clone();
+        // List clears every height hint during its first paint and after a
+        // width change. Refill them after it lays out the visible rows, before
+        // painting the scrollbar, so the thumb spans the entire catalog.
+        let size_hints = canvas(
+            move |_, _, _| {
+                let width = list_state.viewport_bounds().size.width;
+                if hinted_width.replace(Some(width)) != Some(width) {
+                    list_state.clone().with_uniform_item_height(px(65.));
+                }
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0();
 
         v_flex()
             .flex_1()
@@ -627,9 +757,24 @@ impl ConfirmationsEditor {
             .child(toolbar)
             .child(
                 v_flex().flex_1().min_h_0().child(bulk).child(
-                    self.list_scroll
-                        .view("confirmations-body", list, |this| &mut this.list_scroll, cx)
-                        .flex_1(),
+                    v_flex()
+                        .id("confirmations-body")
+                        .test_support()
+                        .relative()
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_hidden()
+                        .child(list)
+                        .child(size_hints)
+                        .child(
+                            self.list_scroll
+                                .wheel_layer(|this| &mut this.list_scroll, cx),
+                        )
+                        .child(
+                            Scrollbar::vertical(&self.list_scroll.handle)
+                                .id("confirmations-body-scrollbar")
+                                .mode(ScrollbarMode::Always),
+                        ),
                 ),
             )
     }
@@ -743,6 +888,7 @@ impl Render for ConfirmationsEditor {
 mod tests {
     use crate::store::Store;
     use eve_wrench_core::confirmations;
+    use gpui_kit::base::ScrollbarHandle;
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{AppContext, TestAppContext, px, size};
     use rust_i18n::t;
@@ -926,6 +1072,130 @@ mod tests {
 
             crate::scrolling::tests::check_vertical(&editor, |e| &mut e.sidebar_scroll, window, cx);
             assert_eq!(editor.read(cx).list_scroll.handle.offset().y, px(0.));
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn all_dialogs_render_a_bounded_window_and_keep_expansion_and_bulk_actions(
+        cx: &mut TestAppContext,
+    ) {
+        let (handle, main, _files) = crate::main_window::editors_tests::setup(cx);
+        cx.update_window(handle, |_, window, cx| {
+            window.click("tab-confirmations", cx)
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            let editor = main
+                .read(cx)
+                .confirmation_editors
+                .values()
+                .next()
+                .unwrap()
+                .clone();
+            let (first, last, count, cache_builds) = {
+                let editor = editor.read(cx);
+                let count = editor.visible_rows.len();
+                assert!(count > 100);
+                (
+                    editor.listed_rows[editor.visible_rows[0]].key.clone(),
+                    editor.listed_rows[*editor.visible_rows.last().unwrap()]
+                        .key
+                        .clone(),
+                    count,
+                    editor.row_cache_builds,
+                )
+            };
+            editor.update(cx, |editor, cx| {
+                editor.rows_rendered = 0;
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(
+                editor.read(cx).rows_rendered < 40,
+                "only rows near the viewport should be built"
+            );
+            assert!(
+                editor.read(cx).list_scroll.handle.content_size().height > px(count as f32 * 40.),
+                "the scrollbar must include the full catalog before offscreen rows are measured"
+            );
+            assert!(window.try_find(format!("confirmation-{last}")).is_none());
+            let collapsed_height = window
+                .find(format!("confirmation-{first}"))
+                .bounds()
+                .size
+                .height;
+            assert!(
+                window
+                    .find(format!("confirmation-{first}"))
+                    .bounds()
+                    .right()
+                    <= window.find("confirmations-body").bounds().right(),
+                "rows must fit the viewport so text wraps and clicks stay inside it"
+            );
+            window.click(format!("confirmation-{first}"), cx);
+            window.render_frame(cx);
+            assert!(
+                window
+                    .find(format!("confirmation-{first}"))
+                    .bounds()
+                    .size
+                    .height
+                    > collapsed_height,
+                "row {first}: expanded={}, before={collapsed_height:?}, after={:?}",
+                editor.read(cx).expanded.contains(&first),
+                window.find(format!("confirmation-{first}")).bounds()
+            );
+            editor.update(cx, |editor, cx| {
+                editor.rows_rendered = 0;
+                cx.notify();
+            });
+            let bounds = editor.read(cx).list_scroll.handle.viewport_bounds();
+            window.drag(
+                gpui_kit::point(bounds.right() - px(7.), bounds.top() + px(10.)),
+                gpui_kit::point(bounds.right() - px(7.), bounds.bottom() - px(1.)),
+                cx,
+            );
+            editor.update(cx, |editor, cx| {
+                editor.rows_rendered = 0;
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(
+                editor.read(cx).rows_rendered < 40,
+                "redrawing at the end must not lay out intermediate rows"
+            );
+            window.find(format!("confirmation-{last}"));
+            assert!(window.try_find(format!("confirmation-{first}")).is_none());
+            editor.update(cx, |editor, cx| {
+                editor.list_scroll.reset();
+                cx.notify();
+            });
+            window.render_frame(cx);
+            assert!(
+                window
+                    .find(format!("confirmation-{first}"))
+                    .bounds()
+                    .size
+                    .height
+                    > collapsed_height
+            );
+            assert_eq!(
+                editor.read(cx).row_cache_builds,
+                cache_builds,
+                "scrolling and expanding must reuse cached text"
+            );
+            window.click("confirmations-all-on", cx);
+            window.render_frame(cx);
+            assert_eq!(
+                editor.read(cx).selected.len(),
+                count,
+                "bulk controls apply to all filtered rows, including offscreen rows"
+            );
+            window.click("confirmations-all-off", cx);
+            window.render_frame(cx);
+            assert!(editor.read(cx).selected.is_empty());
         })
         .unwrap();
     }

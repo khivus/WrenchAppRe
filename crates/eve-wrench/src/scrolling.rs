@@ -1,4 +1,4 @@
-use gpui_kit::base::{Scrollbar, ScrollbarMode};
+use gpui_kit::base::{Scrollbar, ScrollbarHandle, ScrollbarMode};
 use gpui_kit::*;
 use std::time::Instant;
 
@@ -45,8 +45,8 @@ impl WheelMotion {
     }
 }
 
-pub(crate) struct SmoothScroll {
-    pub(crate) handle: ScrollHandle,
+pub(crate) struct SmoothScroll<H = ScrollHandle> {
+    pub(crate) handle: H,
     pub(crate) horizontal: bool,
     pub(crate) motion: WheelMotion,
     pub(crate) frame_pending: bool,
@@ -55,25 +55,34 @@ pub(crate) struct SmoothScroll {
 
 impl Default for SmoothScroll {
     fn default() -> Self {
+        Self::new(ScrollHandle::new())
+    }
+}
+
+impl<H: ScrollbarHandle + Clone> SmoothScroll<H> {
+    pub(crate) fn new(handle: H) -> Self {
         Self {
-            handle: ScrollHandle::new(),
+            handle,
             horizontal: false,
             motion: WheelMotion::default(),
             frame_pending: false,
             last_frame: Instant::now(),
         }
     }
-}
-
-impl SmoothScroll {
     fn position(&self) -> f32 {
         let offset = self.handle.offset();
         if self.horizontal { offset.x } else { offset.y }.as_f32()
     }
 
     fn limit(&self) -> f32 {
-        let offset = self.handle.max_offset();
-        if self.horizontal { offset.x } else { offset.y }.as_f32()
+        let overflow = self.handle.content_size() - self.handle.viewport_bounds().size;
+        if self.horizontal {
+            overflow.width
+        } else {
+            overflow.height
+        }
+        .as_f32()
+        .max(0.)
     }
 
     pub(crate) fn reset(&mut self) {
@@ -81,46 +90,11 @@ impl SmoothScroll {
         self.handle.set_offset(point(px(0.), px(0.)));
     }
 
-    pub(crate) fn view<T: 'static, C: IntoElement, G: Fn(&mut T) -> &mut Self + Copy + 'static>(
-        &self,
-        id: &'static str,
-        content: C,
-        get: G,
-        cx: &mut Context<T>,
-    ) -> impl IntoElement + Styled + use<T, C, G> {
-        div()
-            .id(SharedString::from(format!("{id}-area")))
-            .test_support()
-            .flex()
-            .flex_col()
-            .relative()
-            .min_h_0()
-            .min_w_0()
-            .overflow_hidden()
-            .child(
-                div()
-                    .id(id)
-                    .test_support()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.handle)
-                    .pr_4()
-                    .child(content),
-            )
-            .child(self.wheel_layer(get, cx))
-            .child(
-                Scrollbar::vertical(&self.handle)
-                    .id(SharedString::from(format!("{id}-scrollbar")))
-                    .mode(ScrollbarMode::Always),
-            )
-    }
-
     pub(crate) fn wheel_layer<T: 'static, G: Fn(&mut T) -> &mut Self + Copy + 'static>(
         &self,
         get: G,
         cx: &mut Context<T>,
-    ) -> impl IntoElement + use<T, G> {
+    ) -> impl IntoElement + use<T, G, H> {
         let scroll = self.handle.clone();
         let rendered_offset = scroll.offset();
         let wheel =
@@ -209,22 +183,60 @@ impl SmoothScroll {
     }
 }
 
+impl SmoothScroll {
+    pub(crate) fn view<T: 'static, C: IntoElement, G: Fn(&mut T) -> &mut Self + Copy + 'static>(
+        &self,
+        id: &'static str,
+        content: C,
+        get: G,
+        cx: &mut Context<T>,
+    ) -> impl IntoElement + Styled + use<T, C, G> {
+        div()
+            .id(SharedString::from(format!("{id}-area")))
+            .test_support()
+            .flex()
+            .flex_col()
+            .relative()
+            .min_h_0()
+            .min_w_0()
+            .overflow_hidden()
+            .child(
+                div()
+                    .id(id)
+                    .test_support()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.handle)
+                    .pr_4()
+                    .child(content),
+            )
+            .child(self.wheel_layer(get, cx))
+            .child(
+                Scrollbar::vertical(&self.handle)
+                    .id(SharedString::from(format!("{id}-scrollbar")))
+                    .mode(ScrollbarMode::Always),
+            )
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::{Instant, SmoothScroll};
+    use gpui_kit::base::ScrollbarHandle;
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::*;
 
-    pub(crate) fn check_vertical<T: 'static>(
+    pub(crate) fn check_vertical<T: 'static, H: ScrollbarHandle + Clone>(
         view: &Entity<T>,
-        get: fn(&mut T) -> &mut SmoothScroll,
+        get: fn(&mut T) -> &mut SmoothScroll<H>,
         window: &mut Window,
         cx: &mut App,
     ) {
         let scroll = view.update(cx, |view, _| get(view).handle.clone());
-        let bounds = scroll.bounds();
+        let bounds = scroll.viewport_bounds();
         assert!(
-            scroll.max_offset().y > px(30.),
+            scroll.content_size().height - bounds.size.height > px(30.),
             "scroll region must be constrained by its viewport"
         );
         let position = bounds.center();
