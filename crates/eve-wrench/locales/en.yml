@@ -428,6 +428,8 @@ layoutEditor:
   inSpace: "In space"
   docked: "Docked"
   showClosed: "Closed windows"
+  hideInPreview: "Hide in preview"
+  showInPreview: "Show in preview"
   canvasHint: "Drag a window to move it and its edges to resize it. Scroll to zoom, drag the background to pan, double-click it to fit."
   open: "Open"
   closed: "Closed"

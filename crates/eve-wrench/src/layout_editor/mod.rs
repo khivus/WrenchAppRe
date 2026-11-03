@@ -3,6 +3,7 @@ mod inspector;
 mod model;
 
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -134,6 +135,8 @@ pub struct LayoutEditor {
     canvas_bounds: Rc<Cell<Bounds<Pixels>>>,
     snap: bool,
     show_closed: bool,
+    // Local preview visibility; never included in saved layouts or undo history.
+    preview_hidden: HashSet<String>,
     location: Location,
     rect_inputs: [Entity<InputState>; 4],
     _subscriptions: Vec<Subscription>,
@@ -191,6 +194,7 @@ impl LayoutEditor {
             canvas_bounds: Rc::new(Cell::new(Bounds::default())),
             snap: true,
             show_closed: false,
+            preview_hidden: HashSet::new(),
             location: Location::InSpace,
             rect_inputs,
             _subscriptions: subscriptions,
@@ -217,6 +221,18 @@ impl LayoutEditor {
     fn selected_window(&self) -> Option<&WindowState> {
         let key = self.selected.as_ref()?;
         self.windows.iter().find(|w| &w.key == key)
+    }
+
+    fn set_preview_hidden(&mut self, key: &str, hidden: bool, cx: &mut Context<Self>) {
+        if hidden {
+            self.preview_hidden.insert(key.to_string());
+            if self.hovered.as_deref() == Some(key) {
+                self.hovered = None;
+            }
+        } else {
+            self.preview_hidden.remove(key);
+        }
+        cx.notify();
     }
 
     fn update_selected_rect(&mut self, f: impl FnOnce(&mut WindowRect)) {
@@ -602,6 +618,114 @@ mod tests {
         AppContext, Bounds, TestAppContext, WindowBounds, WindowOptions, point, px, size,
     };
     use std::path::PathBuf;
+
+    #[gpui_kit::test]
+    fn preview_hiding_controls_stay_in_sync_without_changing_saved_windows(
+        cx: &mut TestAppContext,
+    ) {
+        let (_, _, files) = crate::main_window::editors_tests::setup(cx);
+        let windows: Vec<_> = ["overview", "droneview"]
+            .into_iter()
+            .map(|id| WindowState {
+                key: format!("bytes:{id}"),
+                rect: Some(WindowRect {
+                    x: 100,
+                    y: 100,
+                    width: 300,
+                    height: 400,
+                    screen_width: 1920,
+                    screen_height: 1080,
+                }),
+                open: true,
+                locked: false,
+                minimized: false,
+                compact: None,
+                light_background: None,
+                stack: None,
+            })
+            .collect();
+        let path = PathBuf::from(&files.character);
+        window_layout::write_window_layout(&path, &windows, false).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let (handle, editor) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: point(px(0.), px(0.)),
+                        size: size(px(1440.), px(750.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| LayoutEditor::new(path.clone(), window, cx)),
+            )
+            .unwrap()
+        });
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.click("list-bytes:overview", cx);
+            window.render_frame(cx);
+            window.find("window-bytes:overview");
+            window.find("window-bytes:droneview");
+            window.click("flag-preview-hidden", cx);
+            window.render_frame(cx);
+            assert!(window.try_find("window-bytes:overview").is_none());
+            window.find("window-bytes:droneview");
+            window.find("list-bytes:overview");
+            assert!(!editor.read(cx).has_pending_edits());
+            assert!(!editor.read(cx).history.can_undo());
+            assert_eq!(window.find("flag-preview-hidden").checked(), Some(true));
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+            window.click("preview-visibility-bytes:overview", cx);
+            window.render_frame(cx);
+            window.find("window-bytes:overview");
+            assert_eq!(window.find("flag-preview-hidden").checked(), Some(false));
+            window.click("preview-visibility-bytes:droneview", cx);
+            window.render_frame(cx);
+            assert_eq!(
+                editor.read(cx).selected.as_deref(),
+                Some("bytes:overview"),
+                "eye buttons must not change selection"
+            );
+            assert!(window.try_find("window-bytes:droneview").is_none());
+            window.find("window-bytes:overview");
+            assert!(!editor.read(cx).is_dirty());
+            window.click("flag-locked", cx);
+            window.render_frame(cx);
+            window.click("layout-save", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let saved = window_layout::read_window_layout(&path).unwrap();
+        assert!(saved.windows.iter().all(|w| w.open && !w.minimized));
+        assert!(
+            saved
+                .windows
+                .iter()
+                .find(|w| w.key == "bytes:overview")
+                .unwrap()
+                .locked
+        );
+        assert!(
+            !saved
+                .windows
+                .iter()
+                .find(|w| w.key == "bytes:droneview")
+                .unwrap()
+                .locked
+        );
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(!editor.read(cx).has_pending_edits());
+            assert!(window.try_find("window-bytes:droneview").is_none());
+            window.find("list-bytes:droneview");
+            window.click("preview-visibility-bytes:droneview", cx);
+            window.render_frame(cx);
+            window.find("window-bytes:droneview");
+            assert!(!editor.read(cx).is_dirty());
+        })
+        .unwrap();
+    }
 
     #[gpui_kit::test]
     fn layout_list_and_inspector_scroll_smoothly_and_independently(cx: &mut TestAppContext) {

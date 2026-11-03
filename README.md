@@ -249,6 +249,9 @@ screen they were saved on. Scroll to zoom and drag the background to pan.
   overviews and scanners in space, station services when docked
 - Open, close, lock, minimize, compact mode and light background per window;
   chat stacks move as one
+- Use **Hide in preview** or the eye button in the window list to temporarily
+  remove a window from the canvas. Click again to show it; saved EVE settings
+  are unaffected.
 - The window list is grouped by purpose (in space, navigation, fleet and chat,
   inventory, market, character)
 

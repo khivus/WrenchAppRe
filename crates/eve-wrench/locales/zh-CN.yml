@@ -428,6 +428,8 @@ layoutEditor:
   inSpace: "太空中"
   docked: "停靠"
   showClosed: "已关闭的窗口"
+  hideInPreview: "在预览中隐藏"
+  showInPreview: "在预览中显示"
   canvasHint: "拖动窗口来移动，拖动边缘来调整大小。滚动缩放，拖动背景平移，双击背景恢复。"
   open: "已打开"
   closed: "已关闭"

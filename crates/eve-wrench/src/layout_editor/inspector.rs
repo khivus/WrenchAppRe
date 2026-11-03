@@ -1,8 +1,9 @@
 use eve_wrench_core::window_layout::WindowState;
 use gpui_kit::assets::IconName;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::Input;
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Selectable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use rust_i18n::t;
@@ -22,6 +23,8 @@ impl LayoutEditor {
         let accent = ui::target_color();
         let hover = theme.muted.opacity(0.6);
         let key = window.key.clone();
+        let visibility_key = window.key.clone();
+        let hidden = self.preview_hidden.contains(&window.key);
         let open = window.open;
         let (fg, muted) = (theme.foreground, theme.muted_foreground);
         h_flex()
@@ -50,12 +53,40 @@ impl LayoutEditor {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_color(if open { fg } else { muted.opacity(0.7) })
+                    .text_color(if open && !hidden {
+                        fg
+                    } else {
+                        muted.opacity(0.7)
+                    })
                     .child(model::display_name(window, &self.windows)),
             )
             .when(window.locked, |this| {
                 this.child(Icon::new(IconName::Lock).xsmall().text_color(muted))
             })
+            .child(
+                Button::new(SharedString::from(format!(
+                    "preview-visibility-{}",
+                    window.key
+                )))
+                .ghost()
+                .xsmall()
+                .icon(if hidden {
+                    IconName::EyeOff
+                } else {
+                    IconName::Eye
+                })
+                .selected(hidden)
+                .toggled(hidden)
+                .tooltip(if hidden {
+                    t!("layoutEditor.showInPreview").to_string()
+                } else {
+                    t!("layoutEditor.hideInPreview").to_string()
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.set_preview_hidden(&visibility_key, !hidden, cx);
+                })),
+            )
             .on_click(cx.listener(move |this, _, window, cx| {
                 // Selecting a closed window shows the closed ones
                 if !open {
@@ -246,6 +277,27 @@ impl LayoutEditor {
                         None,
                         cx,
                     )))
+                    .child(
+                        h_flex()
+                            .px_4()
+                            .py_1p5()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_sm()
+                                    .child(t!("layoutEditor.hideInPreview").to_string()),
+                            )
+                            .child(
+                                Switch::new("flag-preview-hidden")
+                                    .small()
+                                    .checked(self.preview_hidden.contains(&window.key))
+                                    .on_click(cx.listener(|this, hidden: &bool, _, cx| {
+                                        if let Some(key) = this.selected.clone() {
+                                            this.set_preview_hidden(&key, *hidden, cx);
+                                        }
+                                    })),
+                            ),
+                    )
                     .child(self.render_flag(
                         "flag-open",
                         t!("layoutEditor.openFlag").to_string(),

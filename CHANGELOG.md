@@ -10,6 +10,8 @@
 
 ### Added
 
+- Add a **Hide in preview** toggle and per-window eye buttons in the layout
+  editor. Hidden previews stay listed and do not change saved EVE settings.
 - Add a **Confirmations** tab with searchable dialog text, category and suppressed
   filters, bulk suppression controls, and optional sync to other accounts after saving.
 - Add a **Window layout** tab with a character selector, draggable/resizable window

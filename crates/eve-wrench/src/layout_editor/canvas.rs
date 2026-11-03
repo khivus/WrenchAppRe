@@ -259,6 +259,7 @@ impl LayoutEditor {
             .iter()
             .filter(|w| model::on_canvas(w, &self.windows) && (w.open || self.show_closed))
             .filter(|w| self.in_location(w))
+            .filter(|w| !self.preview_hidden.contains(&w.key))
     }
 
     fn render_window(
@@ -266,7 +267,7 @@ impl LayoutEditor {
         state: &WindowState,
         mapping: Mapping,
         cx: &mut Context<Self>,
-    ) -> Stateful<Div> {
+    ) -> impl IntoElement + use<> {
         let theme = cx.theme();
         let accent = ui::target_color();
         let selected = self.selected.as_deref() == Some(state.key.as_str());
@@ -290,6 +291,7 @@ impl LayoutEditor {
 
         div()
             .id(SharedString::from(format!("window-{}", state.key)))
+            .test_support()
             .absolute()
             .left(bounds.origin.x)
             .top(bounds.origin.y)
@@ -626,7 +628,7 @@ impl LayoutEditor {
         // Closed windows underneath, the selected one on top
         let mut windows: Vec<&WindowState> = self.visible().collect();
         windows.sort_by_key(|w| (w.open, self.selected.as_deref() == Some(w.key.as_str())));
-        let elements: Vec<Stateful<Div>> = windows
+        let elements: Vec<_> = windows
             .into_iter()
             .map(|w| self.render_window(w, mapping, cx))
             .collect();
