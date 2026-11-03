@@ -21,42 +21,57 @@ use crate::ui;
 pub(super) enum EditorSyncKind {
     Probes,
     Drones(DroneSaveMode),
+    Confirmations,
+    WindowLayout,
+}
+
+impl EditorSyncKind {
+    fn settings_kind(self) -> SettingsKind {
+        match self {
+            Self::WindowLayout => SettingsKind::Char,
+            _ => SettingsKind::User,
+        }
+    }
 }
 
 impl MainView {
     pub(super) fn editor_account(&self, data: &AppData, cx: &App) -> Option<SettingsEntry> {
+        self.editor_entry(data, SettingsKind::User, cx)
+    }
+
+    pub(super) fn editor_entry(
+        &self,
+        data: &AppData,
+        kind: SettingsKind,
+        cx: &App,
+    ) -> Option<SettingsEntry> {
         let server = self
             .editor_server
             .and_then(|id| data.servers.iter().find(|s| s.info.id == id))
             .or_else(|| data.servers.first())?;
         let profile = self.selected_profile(server)?;
-        let selected = self.editor_accounts.get(&profile.path).map(String::as_str);
-        let source = self.source_for(SettingsKind::User, cx);
-        profile
-            .accounts
+        let (entries, selections) = match kind {
+            SettingsKind::User => (&profile.accounts, &self.editor_accounts),
+            SettingsKind::Char => (&profile.characters, &self.editor_characters),
+        };
+        let selected = selections.get(&profile.path).map(String::as_str);
+        let source = self.source_for(kind, cx);
+        entries
             .iter()
             .find(|entry| selected == Some(entry.path.as_str()))
             .or_else(|| {
-                profile
-                    .accounts
+                entries
                     .iter()
                     .find(|entry| source.as_ref().is_some_and(|s| s.path() == entry.path))
             })
             .or_else(|| {
-                let default = self
-                    .store
-                    .read(cx)
-                    .config()
-                    .default_sources
-                    .path(SettingsKind::User);
-                profile
-                    .accounts
+                let default = self.store.read(cx).config().default_sources.path(kind);
+                entries
                     .iter()
                     .find(|entry| default == Some(entry.path.as_str()))
             })
             .or_else(|| {
-                profile
-                    .accounts
+                entries
                     .iter()
                     .min_by(|a, b| super::ordering::compare_entry_ids(a, b))
             })
@@ -78,7 +93,16 @@ impl MainView {
             return div().into_any_element();
         };
         let profile = self.selected_profile(server);
-        let entry = self.editor_account(data, cx);
+        let kind = if tab == Tab::WindowLayout {
+            SettingsKind::Char
+        } else {
+            SettingsKind::User
+        };
+        let entry = if kind == SettingsKind::User {
+            self.editor_account(data, cx)
+        } else {
+            self.editor_entry(data, kind, cx)
+        };
         let server_id = server.info.id;
         let view = cx.entity().downgrade();
         let server_view = view.clone();
@@ -87,7 +111,12 @@ impl MainView {
         let profile_view = view.clone();
         let selected_profile = profile.map(|p| p.path.clone());
         let account_view = view;
-        let accounts = profile.map(|p| p.accounts.clone()).unwrap_or_default();
+        let accounts = profile
+            .map(|p| match kind {
+                SettingsKind::User => p.accounts.clone(),
+                SettingsKind::Char => p.characters.clone(),
+            })
+            .unwrap_or_default();
         let selected_account = entry.as_ref().map(|e| e.path.clone());
         let controls = h_flex()
             .id("editor-context")
@@ -140,59 +169,77 @@ impl MainView {
             )
             .child(
                 div().flex_1().min_w_0().child(
-                    Button::new("editor-account")
-                        .outline()
-                        .small()
-                        .w_full()
-                        .label(format!(
-                            "{}: {}",
-                            t!("defaultSource.account"),
-                            entry
-                                .as_ref()
-                                .map(|e| format!("{} · {}", e.display_name, e.id))
-                                .unwrap_or_else(|| t!("editors.noAccount").to_string())
-                        ))
-                        .disabled(accounts.is_empty())
-                        .dropdown_menu(move |menu, _, _| {
-                            accounts.iter().fold(
-                                menu.max_h(px(280.)).scrollable(true),
-                                |menu, entry| {
-                                    let entry = entry.clone();
-                                    menu.item(
-                                        PopupMenuItem::new(format!(
-                                            "{} · {}",
-                                            entry.display_name, entry.id
-                                        ))
-                                        .checked(
-                                            selected_account.as_deref()
-                                                == Some(entry.path.as_str()),
-                                        )
-                                        .on_click(
-                                            view_action(&account_view, move |main, _, cx| {
-                                                // The profile path identifies the account selector's scope.
-                                                if let Some(data) = main.store.read(cx).data()
-                                                    && let Some(profile) = data
-                                                        .servers
-                                                        .iter()
-                                                        .flat_map(|s| &s.profiles)
-                                                        .find(|p| {
-                                                            p.accounts
-                                                                .iter()
-                                                                .any(|e| e.path == entry.path)
-                                                        })
-                                                {
-                                                    main.editor_accounts.insert(
-                                                        profile.path.clone(),
-                                                        entry.path.clone(),
-                                                    );
-                                                }
-                                                cx.notify();
-                                            }),
-                                        ),
+                    Button::new(if kind == SettingsKind::User {
+                        "editor-account"
+                    } else {
+                        "editor-character"
+                    })
+                    .outline()
+                    .small()
+                    .w_full()
+                    .label(format!(
+                        "{}: {}",
+                        if kind == SettingsKind::User {
+                            t!("defaultSource.account")
+                        } else {
+                            t!("defaultSource.character")
+                        },
+                        entry
+                            .as_ref()
+                            .map(|e| format!("{} · {}", e.display_name, e.id))
+                            .unwrap_or_else(|| if kind == SettingsKind::User {
+                                t!("editors.noAccount").to_string()
+                            } else {
+                                t!("editors.noCharacter").to_string()
+                            })
+                    ))
+                    .disabled(accounts.is_empty())
+                    .dropdown_menu(move |menu, _, _| {
+                        accounts.iter().fold(
+                            menu.max_h(px(280.)).scrollable(true),
+                            |menu, entry| {
+                                let entry = entry.clone();
+                                menu.item(
+                                    PopupMenuItem::new(format!(
+                                        "{} · {}",
+                                        entry.display_name, entry.id
+                                    ))
+                                    .checked(
+                                        selected_account.as_deref() == Some(entry.path.as_str()),
                                     )
-                                },
-                            )
-                        }),
+                                    .on_click(view_action(
+                                        &account_view,
+                                        move |main, _, cx| {
+                                            // The profile path identifies the account selector's scope.
+                                            if let Some(data) = main.store.read(cx).data()
+                                                && let Some(profile) = data
+                                                    .servers
+                                                    .iter()
+                                                    .flat_map(|s| &s.profiles)
+                                                    .find(|p| {
+                                                        p.accounts
+                                                            .iter()
+                                                            .chain(&p.characters)
+                                                            .any(|e| e.path == entry.path)
+                                                    })
+                                            {
+                                                let selections = if kind == SettingsKind::User {
+                                                    &mut main.editor_accounts
+                                                } else {
+                                                    &mut main.editor_characters
+                                                };
+                                                selections.insert(
+                                                    profile.path.clone(),
+                                                    entry.path.clone(),
+                                                );
+                                            }
+                                            cx.notify();
+                                        },
+                                    )),
+                                )
+                            },
+                        )
+                    }),
                 ),
             );
         let body = if let Some(entry) = entry {
@@ -215,17 +262,57 @@ impl MainView {
                     self.probe_editors.insert(path.clone(), editor);
                 }
                 self.probe_editors[&path].clone().into_any_element()
-            } else {
+            } else if tab == Tab::Drones {
                 if !self.drone_editors.contains_key(&path) {
                     let editor = self.create_drone_editor(entry, None, window, cx);
                     self.drone_editors.insert(path.clone(), editor);
                 }
                 self.drone_editors[&path].clone().into_any_element()
+            } else if tab == Tab::Confirmations {
+                if !self.confirmation_editors.contains_key(&path) {
+                    let editor = super::confirmations::embedded(path.clone(), window, cx);
+                    self._subscriptions.push(cx.subscribe_in(
+                        &editor,
+                        window,
+                        |main, _, event: &super::confirmations::ConfirmationsSaved, window, cx| {
+                            main.prompt_editor_sync(
+                                event.path.clone(),
+                                EditorSyncKind::Confirmations,
+                                window,
+                                cx,
+                            );
+                        },
+                    ));
+                    self.confirmation_editors.insert(path.clone(), editor);
+                }
+                self.confirmation_editors[&path].clone().into_any_element()
+            } else {
+                if !self.layout_editors.contains_key(&path) {
+                    let editor = crate::layout_editor::embedded(path.clone(), window, cx);
+                    self._subscriptions.push(cx.subscribe_in(
+                        &editor,
+                        window,
+                        |main, _, event: &crate::layout_editor::LayoutSaved, window, cx| {
+                            main.prompt_editor_sync(
+                                event.path.clone(),
+                                EditorSyncKind::WindowLayout,
+                                window,
+                                cx,
+                            );
+                        },
+                    ));
+                    self.layout_editors.insert(path.clone(), editor);
+                }
+                self.layout_editors[&path].clone().into_any_element()
             }
         } else {
             div()
                 .p_4()
-                .child(t!("editors.noAccount").to_string())
+                .child(if kind == SettingsKind::User {
+                    t!("editors.noAccount").to_string()
+                } else {
+                    t!("editors.noCharacter").to_string()
+                })
                 .into_any_element()
         };
         v_flex()
@@ -249,7 +336,7 @@ impl MainView {
         };
         let entries: Vec<_> = data
             .entries()
-            .filter(|e| e.kind == SettingsKind::User && e.path != source)
+            .filter(|e| e.kind == kind.settings_kind() && e.path != source)
             .cloned()
             .collect();
         if entries.is_empty() {
@@ -268,6 +355,10 @@ impl MainView {
             dialog
                 .title(match kind {
                     EditorSyncKind::Probes => t!("editors.syncTitle").to_string(),
+                    EditorSyncKind::Confirmations => {
+                        t!("editors.syncConfirmationsTitle").to_string()
+                    }
+                    EditorSyncKind::WindowLayout => t!("editors.syncLayoutTitle").to_string(),
                     EditorSyncKind::Drones(DroneSaveMode::Append) => {
                         t!("editors.syncAppendTitle").to_string()
                     }
@@ -307,6 +398,18 @@ impl MainView {
                     EditorSyncKind::Drones(mode) => {
                         copy::sync_drone_groups(Path::new(&source), &targets, mode, backup)?
                     }
+                    EditorSyncKind::Confirmations => copy::copy_settings_groups(
+                        Path::new(&source),
+                        &targets,
+                        &["suppress"],
+                        backup,
+                    )?,
+                    EditorSyncKind::WindowLayout => copy::copy_settings_groups(
+                        Path::new(&source),
+                        &targets,
+                        &["windows"],
+                        backup,
+                    )?,
                 };
                 if copied != count {
                     return Err(
@@ -343,6 +446,8 @@ impl Render for EditorSyncDialog {
             .gap_3()
             .child(match self.kind {
                 EditorSyncKind::Probes => t!("editors.syncHint").to_string(),
+                EditorSyncKind::Confirmations => t!("editors.syncConfirmationsHint").to_string(),
+                EditorSyncKind::WindowLayout => t!("editors.syncLayoutHint").to_string(),
                 EditorSyncKind::Drones(DroneSaveMode::Append) => {
                     t!("editors.syncAppendHint").to_string()
                 }
@@ -355,7 +460,11 @@ impl Render for EditorSyncDialog {
             })
             .child(
                 Checkbox::new("sync-all")
-                    .label(t!("editors.selectAll").to_string())
+                    .label(if matches!(self.kind, EditorSyncKind::WindowLayout) {
+                        t!("editors.selectAllCharacters").to_string()
+                    } else {
+                        t!("editors.selectAll").to_string()
+                    })
                     .checked(self.selected.len() == self.entries.len())
                     .on_change(cx.listener(|this, checked: &bool, _, cx| {
                         this.selected = if *checked {
@@ -408,7 +517,11 @@ impl Render for EditorSyncDialog {
                     .child(
                         Button::new("sync-apply")
                             .primary()
-                            .label(t!("editors.sync").to_string())
+                            .label(if matches!(self.kind, EditorSyncKind::WindowLayout) {
+                                t!("editors.syncCharacters").to_string()
+                            } else {
+                                t!("editors.sync").to_string()
+                            })
                             .disabled(self.selected.is_empty())
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let source = this.source.clone();

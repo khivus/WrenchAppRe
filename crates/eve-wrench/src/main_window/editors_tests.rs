@@ -11,12 +11,12 @@ use serde_json::json;
 use super::{MainView, Source, Tab};
 use crate::store::Store;
 
-struct Files {
-    dir: PathBuf,
-    account: String,
-    target: String,
-    character: String,
-    target_character: String,
+pub(crate) struct Files {
+    pub(crate) dir: PathBuf,
+    pub(crate) account: String,
+    pub(crate) target: String,
+    pub(crate) character: String,
+    pub(crate) target_character: String,
 }
 
 impl Drop for Files {
@@ -28,11 +28,12 @@ impl Drop for Files {
     }
 }
 
-fn setup(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<MainView>, Files) {
+pub(crate) fn setup(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<MainView>, Files) {
     let result = cx.update(|cx| {
         gpui_kit::init(cx);
         cx.set_reduce_motion(true);
         crate::formation_editor::init(cx);
+        crate::layout_editor::init(cx);
         Store::install_for_test(super::profiles::tests::sample_data(), cx);
         let store = Store::global(cx);
         let dir = store.read(cx).locations().data_dir().to_path_buf();
@@ -572,4 +573,133 @@ fn editor_account_uses_selected_profile_and_explicit_or_default_account(cx: &mut
         });
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn layout_tab_preserves_drafts_blocks_updates_and_syncs_only_characters(cx: &mut TestAppContext) {
+    use eve_wrench_core::window_layout::{self, WindowRect, WindowState};
+    let (handle, main, files) = setup(cx);
+    let initial = WindowState {
+        key: "bytes:overview".into(),
+        rect: Some(WindowRect {
+            x: 100,
+            y: 100,
+            width: 300,
+            height: 400,
+            screen_width: 1920,
+            screen_height: 1080,
+        }),
+        open: true,
+        locked: false,
+        minimized: false,
+        compact: None,
+        light_background: None,
+        stack: None,
+    };
+    window_layout::write_window_layout(std::path::Path::new(&files.character), &[initial], false)
+        .unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("tab-window-layout", cx)
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.find("editor-character");
+        assert!(window.try_find("editor-account").is_none());
+        assert!(window.try_find("copy-settings").is_none());
+        assert!(window.find("layout-editor").bounds().bottom() <= window.viewport_size().height);
+        window.click("list-bytes:overview", cx);
+        window.render_frame(cx);
+        window.click("flag-locked", cx);
+        assert!(
+            main.read(cx).layout_editors[&files.character]
+                .read(cx)
+                .is_dirty()
+        );
+        window.render_frame(cx);
+        window.click("layout-undo", cx);
+        assert!(
+            !main.read(cx).layout_editors[&files.character]
+                .read(cx)
+                .is_dirty()
+        );
+        window.render_frame(cx);
+        window.click("layout-redo", cx);
+        main.update(cx, |main, cx| {
+            main.update.preview = true;
+            cx.notify();
+        });
+        window.render_frame(cx);
+        window.click("update-button", cx);
+        assert_eq!(
+            main.read(cx).update.status.as_deref(),
+            Some(rust_i18n::t!("update.saveEdits").as_ref())
+        );
+        main.update(cx, |main, cx| {
+            let data = main.store.read(cx).data().unwrap();
+            let profile = main
+                .selected_profile(&data.servers[0])
+                .unwrap()
+                .path
+                .clone();
+            main.editor_characters
+                .insert(profile, files.target_character.clone());
+            cx.notify();
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert!(
+            main.read(cx).layout_editors[&files.character]
+                .read(cx)
+                .is_dirty()
+        );
+        assert!(
+            !main.read(cx).layout_editors[&files.target_character]
+                .read(cx)
+                .is_dirty()
+        );
+        main.update(cx, |main, cx| {
+            main.editor_characters.clear();
+            cx.notify();
+        });
+        window.render_frame(cx);
+        window.click("layout-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("sync-all", cx);
+        window.render_frame(cx);
+        window.click("sync-apply", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    for path in [&files.character, &files.target_character] {
+        let layout = window_layout::read_window_layout(std::path::Path::new(path)).unwrap();
+        assert!(
+            layout
+                .windows
+                .iter()
+                .find(|w| w.key == "bytes:overview")
+                .unwrap()
+                .locked
+        );
+        let decoded = blue_marshal::decode(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(
+            blue_marshal::to_json(&decoded.value)["bytes:ui"]["bytes:unrelated"]["tuple"][1],
+            "utf8:keep"
+        );
+    }
+    for path in [&files.account, &files.target] {
+        assert!(
+            window_layout::read_window_layout(std::path::Path::new(path))
+                .unwrap()
+                .windows
+                .is_empty()
+        );
+    }
+    cx.update(|cx| assert_eq!(cx.windows().len(), 1));
 }

@@ -62,7 +62,13 @@ impl MainView {
             .iter()
             .map(|s| Tab::Server(s.info.id))
             .collect();
-        tabs.extend([Tab::Backups, Tab::Probes, Tab::Drones]);
+        tabs.extend([
+            Tab::Backups,
+            Tab::Probes,
+            Tab::Drones,
+            Tab::Confirmations,
+            Tab::WindowLayout,
+        ]);
         let active = self
             .tab
             .filter(|tab| tabs.contains(tab))
@@ -95,7 +101,13 @@ impl MainView {
             .iter()
             .map(|s| Tab::Server(s.info.id))
             .collect();
-        tabs.extend([Tab::Backups, Tab::Probes, Tab::Drones]);
+        tabs.extend([
+            Tab::Backups,
+            Tab::Probes,
+            Tab::Drones,
+            Tab::Confirmations,
+            Tab::WindowLayout,
+        ]);
         let active = self
             .tab
             .filter(|t| tabs.contains(t))
@@ -108,7 +120,7 @@ impl MainView {
                 .find(|s| s.info.id == server)
                 .map(|s| self.render_server(s, &data, window, cx)),
             Some(Tab::Backups) => Some(self.render_backups(&data, window, cx).into_any_element()),
-            Some(tab @ (Tab::Probes | Tab::Drones)) => {
+            Some(tab @ (Tab::Probes | Tab::Drones | Tab::Confirmations | Tab::WindowLayout)) => {
                 Some(self.render_editor(tab, &data, window, cx))
             }
             None => None,
@@ -204,6 +216,22 @@ impl MainView {
                         fg,
                         Icon::new(IconName::Drone).xsmall().into_any_element(),
                         SharedString::from(t!("actions.editDroneGroups").to_string()),
+                        None,
+                    ),
+                    Tab::Confirmations => (
+                        SharedString::from("tab-confirmations"),
+                        fg,
+                        Icon::new(IconName::BellOff).xsmall().into_any_element(),
+                        SharedString::from(t!("actions.editConfirmations").to_string()),
+                        None,
+                    ),
+                    Tab::WindowLayout => (
+                        SharedString::from("tab-window-layout"),
+                        fg,
+                        Icon::new(IconName::PanelsTopLeft)
+                            .xsmall()
+                            .into_any_element(),
+                        SharedString::from(t!("actions.editWindowLayout").to_string()),
                         None,
                     ),
                 };

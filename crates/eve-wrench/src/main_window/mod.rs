@@ -1,5 +1,6 @@
 mod actions;
 mod browser;
+mod confirmations;
 mod copy_panel;
 mod copy_plan;
 mod default_sources;
@@ -7,7 +8,7 @@ mod dialogs;
 mod drone_groups;
 mod editors;
 #[cfg(test)]
-mod editors_tests;
+pub(crate) mod editors_tests;
 mod entry_columns;
 mod ordering;
 mod profile_copy;
@@ -180,6 +181,17 @@ enum Tab {
     Backups,
     Probes,
     Drones,
+    Confirmations,
+    WindowLayout,
+}
+
+impl Tab {
+    fn is_editor(self) -> bool {
+        matches!(
+            self,
+            Self::Probes | Self::Drones | Self::Confirmations | Self::WindowLayout
+        )
+    }
 }
 
 struct AliasEdit {
@@ -197,8 +209,11 @@ pub struct MainView {
     other_source: Option<Source>,
     editor_server: Option<Server>,
     editor_accounts: HashMap<String, String>,
+    editor_characters: HashMap<String, String>,
     probe_editors: HashMap<String, Entity<crate::formation_editor::FormationEditor>>,
     drone_editors: HashMap<String, Entity<drone_groups::DroneGroupsEditor>>,
+    confirmation_editors: HashMap<String, Entity<confirmations::ConfirmationsEditor>>,
+    layout_editors: HashMap<String, Entity<crate::layout_editor::LayoutEditor>>,
     using_default_sources: bool,
     targets: targets::Targets,
     target_scroll: UniformListScrollHandle,
@@ -257,11 +272,14 @@ impl MainView {
             }),
         ];
 
-        // A newer drone catalog only matters the next time the picker opens,
-        // so failures stay silent and the built-in one keeps working
+        // Catalog refreshes stay silent; bundled data remains available offline.
         if !cfg!(test) {
             let data_dir = store.read(cx).locations().data_dir().to_path_buf();
             cx.background_spawn(async move {
+                eve_wrench_core::confirmations::load_cached_catalog(&data_dir);
+                if let Err(e) = eve_wrench_core::confirmations::refresh_catalog(&data_dir) {
+                    log::warn!("Confirmation catalog refresh failed: {e}");
+                }
                 eve_wrench_core::drone_groups::load_cached_catalog(&data_dir);
                 if let Err(e) = eve_wrench_core::drone_groups::refresh_catalog(&data_dir) {
                     log::warn!("Drone catalog refresh failed: {e}");
@@ -299,8 +317,11 @@ impl MainView {
             other_source: None,
             editor_server: None,
             editor_accounts: HashMap::new(),
+            editor_characters: HashMap::new(),
             probe_editors: HashMap::new(),
             drone_editors: HashMap::new(),
+            confirmation_editors: HashMap::new(),
+            layout_editors: HashMap::new(),
             using_default_sources,
             targets: targets::Targets::default(),
             target_scroll,
@@ -374,7 +395,7 @@ impl MainView {
         let tab_exists = match self.tab {
             Some(Tab::Server(server)) => data.servers.iter().any(|s| s.info.id == server),
             Some(Tab::Backups) => true,
-            Some(Tab::Probes | Tab::Drones) => true,
+            Some(Tab::Probes | Tab::Drones | Tab::Confirmations | Tab::WindowLayout) => true,
             None => false,
         };
         if !tab_exists {
@@ -455,10 +476,9 @@ impl Render for MainView {
                 .items_stretch()
                 .overflow_hidden()
                 .child(self.render_browser(window, cx))
-                .when(
-                    !matches!(self.tab, Some(Tab::Probes | Tab::Drones)),
-                    |this| this.child(self.render_copy_panel(cx)),
-                )
+                .when(!self.tab.is_some_and(Tab::is_editor), |this| {
+                    this.child(self.render_copy_panel(cx))
+                })
                 .into_any_element(),
         };
 

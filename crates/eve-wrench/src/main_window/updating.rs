@@ -102,6 +102,14 @@ impl MainView {
                 .drone_editors
                 .values()
                 .any(|editor| editor.read(cx).is_dirty(cx))
+            || self
+                .confirmation_editors
+                .values()
+                .any(|editor| editor.read(cx).has_pending_edits())
+            || self
+                .layout_editors
+                .values()
+                .any(|editor| editor.read(cx).has_pending_edits())
     }
 
     fn install_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {

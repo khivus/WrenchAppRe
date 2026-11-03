@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added
+
+- Add a **Confirmations** tab with searchable dialog text, category and suppressed
+  filters, bulk suppression controls, and optional sync to other accounts after saving.
+- Add a **Window layout** tab with a character selector, draggable/resizable window
+  previews, snapping, docked/in-space views, exact coordinates, window state controls,
+  undo/redo, and optional sync to other characters after saving.
+- Give both editors independent draggable scrollbars and smooth wheel scrolling in
+  their lists and sidebars, preserving drafts per settings file across tab changes.
+- Protect unsaved confirmation and layout edits from automatic reloads and app updates.
+
+### Changed
+
+- Merge upstream through `18f10f4`, including dialog data for client build 3662168,
+  while preserving fork versions, drone ordering/save modes, and the Windows portable
+  updater. Upstream's AppImage restart fix does not apply to that updater.
+- Read dialog catalog updates from upstream, with an offline bundled copy and no
+  scheduled catalog-generation workflows in this fork.
+
 ## 0.8.0 - 2026-10-25
 
 ### Changed
