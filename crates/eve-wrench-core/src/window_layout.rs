@@ -28,6 +28,9 @@ use serde_json::{Map, Value, json};
 use crate::backups::auto_backup;
 use crate::marshal::{encode_settings_json, filetime_now, load_settings_json, strip_type_prefix};
 
+mod activity;
+pub use activity::WindowActivity;
+
 const WINDOWS_KEY: &str = "bytes:windows";
 const RECTS_KEY: &str = "bytes:windowSizesAndPositions_1";
 const OPEN_KEY: &str = "bytes:openWindows";
@@ -95,6 +98,8 @@ pub struct WindowLayout {
     pub neocom: Neocom,
     // Whether windows without their own compact entry are compact
     pub compact_default: bool,
+    // Read-only context for reconstructing the saved scene, never written back.
+    pub activity: WindowActivity,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -373,6 +378,7 @@ pub fn read_window_layout(path: &Path) -> Result<WindowLayout, String> {
         windows: layout_from_settings(&json),
         neocom: neocom_from_settings(&json),
         compact_default,
+        activity: activity::read(&json, path.parent()),
     })
 }
 

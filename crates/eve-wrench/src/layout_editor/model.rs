@@ -73,12 +73,13 @@ const DOCKED_ONLY: [&str; 6] = [
 ];
 
 // Windows from the client's inflight UI, which only show in space.
-const SPACE_ONLY: [&str; 5] = [
+const SPACE_ONLY: [&str; 6] = [
     "droneview",
     "selecteditemview",
     "probeScannerWindow",
     "directionalScannerWindow",
     "MoonScanner",
+    "InventorySpace",
 ];
 
 pub fn docked_only(window: &WindowState) -> bool {

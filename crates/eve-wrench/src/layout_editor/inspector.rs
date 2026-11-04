@@ -27,7 +27,7 @@ impl LayoutEditor {
         let key = window.key.clone();
         let visibility_key = window.key.clone();
         let hidden = self.preview_hidden.contains(&window.key);
-        let open = window.open;
+        let active = self.active_window(window);
         let (fg, muted) = (theme.foreground, theme.muted_foreground);
         h_flex()
             .id(SharedString::from(format!("list-{}", window.key)))
@@ -55,12 +55,12 @@ impl LayoutEditor {
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_color(if open && !hidden {
+                    .text_color(if active && !hidden {
                         fg
                     } else {
                         muted.opacity(0.7)
                     })
-                    .child(model::display_name(window, &self.windows)),
+                    .child(self.preview_name(window)),
             )
             .when(window.locked, |this| {
                 this.child(Icon::new(IconName::Lock).xsmall().text_color(muted))
@@ -91,10 +91,6 @@ impl LayoutEditor {
                 })),
             )
             .on_click(cx.listener(move |this, _, window, cx| {
-                // Selecting a closed window shows the closed ones
-                if !open {
-                    this.show_closed = true;
-                }
                 this.select(Some(key.clone()), window, cx);
             }))
     }
@@ -105,6 +101,18 @@ impl LayoutEditor {
             .windows
             .iter()
             .filter(|w| model::listable(w, &self.windows) && self.in_location(w))
+            .filter(|w| {
+                self.show_all_windows
+                    || self.active_window(w)
+                    || self.selected.as_deref() == Some(w.key.as_str())
+                    || self.preview_hidden.contains(&w.key)
+                    || self.geometry_resets.contains(&w.key)
+                    || self
+                        .saved
+                        .iter()
+                        .find(|old| old.key == w.key)
+                        .is_some_and(|old| old != *w)
+            })
             .collect();
 
         let mut sections: Vec<Div> = Vec::new();
@@ -118,12 +126,9 @@ impl LayoutEditor {
                 continue;
             }
             list.sort_by_cached_key(|w| {
-                (
-                    !w.open,
-                    model::display_name(w, &self.windows).to_lowercase(),
-                )
+                (!self.active_window(w), self.preview_name(w).to_lowercase())
             });
-            let open = list.iter().filter(|w| w.open).count();
+            let open = list.iter().filter(|w| self.active_window(w)).count();
             let title = t!(format!("layoutEditor.category.{}", category.id())).to_string();
             sections.push(
                 v_flex()
@@ -194,7 +199,8 @@ impl LayoutEditor {
                 let saved_on = window
                     .rect
                     .filter(|r| r.screen_width != screen.width || r.screen_height != screen.height);
-                let tabs: Vec<String> = model::members(&self.windows, &window.key)
+                let tabs: Vec<String> = self
+                    .preview_members(&window.key)
                     .iter()
                     .map(|w| model::window_name(w.id()))
                     .collect();
@@ -205,11 +211,7 @@ impl LayoutEditor {
                             .px_4()
                             .py_3()
                             .gap_0p5()
-                            .child(
-                                div()
-                                    .font_medium()
-                                    .child(model::display_name(&window, &self.windows)),
-                            )
+                            .child(div().font_medium().child(self.preview_name(&window)))
                             .child(
                                 div()
                                     .text_xs()

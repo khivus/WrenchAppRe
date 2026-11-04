@@ -243,6 +243,14 @@ profile and character to see its
 windows where the game puts them, Neocom included, on a scaled copy of the
 screen they were saved on. Scroll to zoom and drag the background to pan.
 
+The default view reconstructs likely visible windows from saved chat membership,
+assigned overview instances, minimized state and scanner embedding preferences.
+Collapsed windows appear as headers. **All saved windows** also shows historical
+dialogs, inactive tabs and old instances. These filters affect only the preview;
+the files do not provide an exact snapshot of a running client's visibility.
+Overview assignments are used when the profile's account files agree, since a
+character file does not identify which account owns it.
+
 - Drag windows to move them and drag their edges to resize them, with snapping
   to the screen border, the Neocom and other windows, or type exact positions
 - Switch between **In space** and **Docked** to see the windows each shows:

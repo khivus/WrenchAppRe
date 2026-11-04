@@ -163,10 +163,17 @@ impl LayoutEditor {
 
     // Station-only windows are left out in space, inflight ones when docked.
     pub(super) fn in_location(&self, window: &WindowState) -> bool {
-        match self.location {
+        let allowed = |window: &WindowState| match self.location {
             Location::InSpace => !model::docked_only(window),
             Location::Docked => !model::space_only(window),
+        };
+        if window.is_stack() {
+            return model::members(&self.windows, &window.key)
+                .into_iter()
+                .filter(|w| self.show_all_windows || self.active_window(w))
+                .any(allowed);
         }
+        allowed(window)
     }
 
     fn start_drag(
@@ -217,17 +224,22 @@ impl LayoutEditor {
                 desktop,
                 self.visible()
                     .filter(|w| w.key != drag.key)
-                    .filter_map(|w| w.rect),
+                    .filter_map(|w| w.rect.map(|r| self.preview_rect(&w.key, r, mapping))),
             )
         });
         let threshold = (SNAP_DISTANCE / mapping.scale).round() as i64;
-        let rect = model::drag_rect(
-            drag.start,
+        let start = self.preview_rect(&drag.key, drag.start, mapping);
+        let mut rect = model::drag_rect(
+            start,
             drag.edges,
             delta,
             desktop,
             lines.as_ref().map(|lines| (lines, threshold)),
         );
+        // A collapsed header moves as a header; its expanded size stays saved.
+        if drag.edges.is_move() {
+            rect.height = drag.start.height;
+        }
         let key = drag.key.clone();
         model::set_rect(&mut self.windows, &key, rect);
         self.sync_inputs(window, cx);
@@ -253,11 +265,47 @@ impl LayoutEditor {
         cx.notify();
     }
 
-    // Open windows on the canvas, plus closed ones when they're shown.
+    pub(super) fn active_window(&self, window: &WindowState) -> bool {
+        self.activity
+            .is_likely_visible_in_draft(window, &self.windows, &self.saved)
+    }
+
+    fn preview_rect(&self, key: &str, mut rect: WindowRect, mapping: Mapping) -> WindowRect {
+        if self.activity.collapsed.contains(key) {
+            rect.height = ((TITLE_HEIGHT + 2.) / mapping.scale).round().max(1.) as i64;
+        }
+        rect
+    }
+
+    pub(super) fn preview_members(&self, key: &str) -> Vec<&WindowState> {
+        model::members(&self.windows, key)
+            .into_iter()
+            .filter(|w| (self.show_all_windows || self.active_window(w)) && self.in_location(w))
+            .collect()
+    }
+
+    pub(super) fn preview_name(&self, window: &WindowState) -> String {
+        if !self.show_all_windows && window.is_stack() {
+            let names: Vec<_> = self
+                .preview_members(&window.key)
+                .iter()
+                .map(|w| model::window_name(w.id()))
+                .collect();
+            if !names.is_empty() {
+                return names.join(" · ");
+            }
+        }
+        model::display_name(window, &self.windows)
+    }
+
+    // Default to the reconstructed saved scene; historical entries are opt-in.
     pub(super) fn visible(&self) -> impl Iterator<Item = &WindowState> {
         self.windows
             .iter()
-            .filter(|w| model::on_canvas(w, &self.windows) && (w.open || self.show_closed))
+            .filter(|w| {
+                model::on_canvas(w, &self.windows)
+                    && (self.show_all_windows || self.active_window(w))
+            })
             .filter(|w| self.in_location(w))
             .filter(|w| !self.preview_hidden.contains(&w.key))
     }
@@ -272,8 +320,12 @@ impl LayoutEditor {
         let accent = ui::target_color();
         let selected = self.selected.as_deref() == Some(state.key.as_str());
         let hovered = self.hovered.as_deref() == Some(state.key.as_str());
-        let bounds = mapping.rect(&state.rect.expect("windows on the canvas have a rect"));
-        let name = model::display_name(state, &self.windows);
+        let mut bounds = mapping.rect(&state.rect.expect("windows on the canvas have a rect"));
+        let collapsed = self.activity.collapsed.contains(&state.key);
+        if collapsed {
+            bounds.size.height = px(TITLE_HEIGHT + 2.);
+        }
+        let name = self.preview_name(state);
         let dims = state
             .rect
             .map(|r| format!("{} × {}", r.width, r.height))
@@ -305,7 +357,7 @@ impl LayoutEditor {
             .border_color(border)
             .bg(theme.background.opacity(0.85))
             .when(selected, |this| this.bg(accent.opacity(0.08)))
-            .when(!state.open || state.minimized, |this| this.opacity(0.45))
+            .when(!self.active_window(state), |this| this.opacity(0.45))
             .cursor_move()
             .on_hover(cx.listener(move |this, hovering: &bool, _, cx| {
                 let key = Some(hover_key.clone());
@@ -349,7 +401,7 @@ impl LayoutEditor {
                     })
                     .child(div().min_w_0().truncate().child(name)),
             )
-            .when(selected || hovered, |this| {
+            .when((selected || hovered) && !collapsed, |this| {
                 this.child(
                     div()
                         .flex_1()
@@ -361,7 +413,7 @@ impl LayoutEditor {
                         .child(dims),
                 )
             })
-            .when(selected, |this| {
+            .when(selected && !collapsed, |this| {
                 this.children(self.resize_handles(&state.key, bounds.size, cx))
             })
     }
@@ -542,19 +594,20 @@ impl LayoutEditor {
                     })),
             )
             .child(
-                Button::new("show-closed")
+                Button::new("show-all-windows")
                     .ghost()
                     .xsmall()
-                    .icon(if self.show_closed {
+                    .icon(if self.show_all_windows {
                         IconName::Eye
                     } else {
                         IconName::EyeOff
                     })
-                    .tooltip(t!("layoutEditor.showClosed").to_string())
-                    .selected(self.show_closed)
-                    .toggled(self.show_closed)
+                    .label(t!("layoutEditor.allSavedWindows").to_string())
+                    .tooltip(t!("layoutEditor.allSavedWindowsHint").to_string())
+                    .selected(self.show_all_windows)
+                    .toggled(self.show_all_windows)
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_closed = !this.show_closed;
+                        this.show_all_windows = !this.show_all_windows;
                         cx.notify();
                     })),
             )

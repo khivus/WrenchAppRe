@@ -7,7 +7,9 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use eve_wrench_core::window_layout::{self, Neocom, WindowLayout, WindowRect, WindowState};
+use eve_wrench_core::window_layout::{
+    self, Neocom, WindowActivity, WindowLayout, WindowRect, WindowState,
+};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState};
@@ -123,6 +125,7 @@ pub struct LayoutEditor {
     geometry_resets: HashSet<String>,
     neocom: Neocom,
     compact_default: bool,
+    activity: WindowActivity,
     history: History,
     disk_changed: bool,
     saving: bool,
@@ -135,7 +138,7 @@ pub struct LayoutEditor {
     view: View,
     canvas_bounds: Rc<Cell<Bounds<Pixels>>>,
     snap: bool,
-    show_closed: bool,
+    show_all_windows: bool,
     // Local preview visibility; never included in saved layouts or undo history.
     preview_hidden: HashSet<String>,
     location: Location,
@@ -184,6 +187,7 @@ impl LayoutEditor {
             geometry_resets: HashSet::new(),
             neocom: Neocom::default(),
             compact_default: false,
+            activity: WindowActivity::default(),
             history: History::default(),
             disk_changed: false,
             saving: false,
@@ -195,7 +199,7 @@ impl LayoutEditor {
             view: View::default(),
             canvas_bounds: Rc::new(Cell::new(Bounds::default())),
             snap: true,
-            show_closed: false,
+            show_all_windows: false,
             preview_hidden: HashSet::new(),
             location: Location::InSpace,
             rect_inputs,
@@ -287,6 +291,7 @@ impl LayoutEditor {
                         let layout = placed(layout);
                         this.neocom = layout.neocom;
                         this.compact_default = layout.compact_default;
+                        this.activity = layout.activity;
                         this.saved = layout.windows.clone();
                         this.windows = layout.windows;
                         this.geometry_resets.clear();
@@ -319,8 +324,10 @@ impl LayoutEditor {
                 };
                 this.neocom = layout.neocom;
                 this.compact_default = layout.compact_default;
+                this.activity = layout.activity;
                 let disk = layout.windows;
                 if disk == this.saved || !matches!(this.state, LoadState::Ready) {
+                    cx.notify();
                     return;
                 }
                 if this.is_dirty() {
@@ -665,12 +672,216 @@ impl Render for LayoutEditor {
 
 #[cfg(test)]
 mod tests {
-    use super::{LayoutEditor, WindowRect, WindowState, window_layout};
+    use super::{LayoutEditor, WindowRect, WindowState, model, window_layout};
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{
         AppContext, Bounds, TestAppContext, WindowBounds, WindowOptions, point, px, size,
     };
     use std::path::PathBuf;
+
+    #[gpui_kit::test]
+    fn saved_scene_defaults_to_current_windows_and_all_saved_is_preview_only(
+        cx: &mut TestAppContext,
+    ) {
+        use serde_json::json;
+
+        let (_, _, files) = crate::main_window::editors_tests::setup(cx);
+        let encode = |root: serde_json::Value| {
+            blue_marshal::encode(
+                &blue_marshal::from_json(&root).unwrap(),
+                &blue_marshal::EncodeOptions::default(),
+            )
+            .unwrap()
+        };
+        for account in [&files.account, &files.target] {
+            std::fs::write(
+                account,
+                encode(json!({"bytes:overview": {
+                    "bytes:tabsByWindowInstanceID": {"tuple": ["long:1", [[0], [], [2]]]}
+                }})),
+            )
+            .unwrap();
+        }
+        let ids = [
+            "overview",
+            "overview_1",
+            "overview_2",
+            "100",
+            "999",
+            "chatchannel_local",
+            "chatchannel_old",
+            "chatchannel_old_tab",
+            "directionalScannerWindow",
+            "probeScannerWindow",
+            "market",
+            "walletWindow",
+            "contactmanagement_123",
+            "InventorySpace",
+        ];
+        let geometry: serde_json::Map<_, _> = ids
+            .iter()
+            .map(|id| {
+                (
+                    format!("bytes:{id}"),
+                    json!({"tuple": [100, 100, 300, 400, 1920, 1080]}),
+                )
+            })
+            .collect();
+        let open: serde_json::Map<_, _> = ids
+            .iter()
+            .map(|id| (format!("bytes:{id}"), json!(*id != "overview_2")))
+            .collect();
+        let original = encode(json!({
+            "bytes:ui": {
+                "bytes:chatchannels": {"tuple": ["long:1", [{"tuple": ["bytes:local", "bytes:local_1", "utf8:Local"]}]]},
+                "bytes:mapDirectionPanelEmbedded": {"tuple": ["long:1", false]},
+                "bytes:mapProbePanelEmbedded": {"tuple": ["long:1", true]}
+            },
+            "bytes:windows": {
+                "bytes:windowSizesAndPositions_1": {"tuple": ["long:1", geometry]},
+                "bytes:openWindows": {"tuple": ["long:1", open]},
+                "bytes:stacksWindows": {"tuple": ["long:1", {
+                    "bytes:chatchannel_local": "bytes:100", "bytes:chatchannel_old_tab": "bytes:100",
+                    "bytes:chatchannel_old": "bytes:999"
+                }]},
+                "bytes:minimizedWindows": {"tuple": ["long:1", {
+                    "bytes:walletWindow": true, "bytes:chatchannel_local": true
+                }]},
+                "bytes:collapsedWindows": {"tuple": ["long:1", {"bytes:market": true}]}
+            }
+        }));
+        let path = PathBuf::from(&files.character);
+        std::fs::write(&path, &original).unwrap();
+        let (handle, editor) = cx.update(|cx| {
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(Bounds {
+                        origin: point(px(0.), px(0.)),
+                        size: size(px(1440.), px(1000.)),
+                    })),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| cx.new(|cx| LayoutEditor::new(path.clone(), window, cx)),
+            )
+            .unwrap()
+        });
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            let active = [
+                "overview",
+                "overview_2",
+                "100",
+                "directionalScannerWindow",
+                "market",
+                "InventorySpace",
+            ];
+            let historical = [
+                "overview_1",
+                "999",
+                "probeScannerWindow",
+                "walletWindow",
+                "contactmanagement_123",
+            ];
+            for id in active {
+                window.find(format!("window-bytes:{id}"));
+                window.find(format!("list-bytes:{id}"));
+            }
+            for id in historical {
+                assert!(
+                    window.try_find(format!("window-bytes:{id}")).is_none(),
+                    "{id}"
+                );
+                assert!(
+                    window.try_find(format!("list-bytes:{id}")).is_none(),
+                    "{id}"
+                );
+            }
+            assert_eq!(
+                window.find("window-bytes:market").bounds().size.height,
+                px(20.)
+            );
+            let stack = editor
+                .read(cx)
+                .windows
+                .iter()
+                .find(|w| w.key == "bytes:100")
+                .unwrap();
+            assert_eq!(editor.read(cx).preview_members(&stack.key).len(), 1);
+            assert_eq!(
+                editor.read(cx).preview_name(stack),
+                model::window_name("chatchannel_local")
+            );
+            window.click("show-all-windows", cx);
+            window.render_frame(cx);
+            for id in historical {
+                window.find(format!("window-bytes:{id}"));
+                window.find(format!("list-bytes:{id}"));
+            }
+            window.click("show-all-windows", cx);
+            window.render_frame(cx);
+            assert!(window.try_find("window-bytes:999").is_none());
+            window.click("preview-visibility-bytes:100", cx);
+            window.render_frame(cx);
+            assert!(window.try_find("window-bytes:100").is_none());
+            window.find("list-bytes:100");
+            window.click("preview-visibility-bytes:100", cx);
+            window.render_frame(cx);
+            window.find("window-bytes:100");
+            assert!(!editor.read(cx).is_dirty());
+            assert!(!editor.read(cx).history.can_undo());
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+            assert_eq!(
+                editor
+                    .read(cx)
+                    .windows
+                    .iter()
+                    .find(|w| w.key == "bytes:market")
+                    .unwrap()
+                    .rect
+                    .unwrap()
+                    .height,
+                400
+            );
+            window.click("list-bytes:overview", cx);
+            window.render_frame(cx);
+            window.click("flag-open", cx);
+            window.render_frame(cx);
+            assert!(window.try_find("window-bytes:overview").is_none());
+            window.find("list-bytes:overview");
+            assert!(editor.read(cx).is_dirty());
+            window.click("layout-undo", cx);
+            window.render_frame(cx);
+            window.find("window-bytes:overview");
+            assert!(!editor.read(cx).is_dirty());
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+        })
+        .unwrap();
+
+        // Account metadata can change while character geometry stays identical.
+        for account in [&files.account, &files.target] {
+            std::fs::write(
+                account,
+                encode(json!({"bytes:overview": {
+                    "bytes:tabsByWindowInstanceID": {"tuple": ["long:1", [[0], [1], []]]}
+                }})),
+            )
+            .unwrap();
+        }
+        cx.update_window(handle, |_, window, cx| {
+            editor.update(cx, |editor, cx| editor.on_disk_changed(window, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find("window-bytes:overview_1");
+            assert!(window.try_find("window-bytes:overview_2").is_none());
+            assert!(!editor.read(cx).is_dirty());
+            assert_eq!(std::fs::read(&path).unwrap(), original);
+        })
+        .unwrap();
+    }
 
     #[gpui_kit::test]
     fn preview_hiding_controls_stay_in_sync_without_changing_saved_windows(

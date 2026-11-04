@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Default the layout preview and list to likely visible saved windows, using chat
+  membership, current overview assignments, minimized state and scanner embedding
+  preferences instead of historical open flags alone. Show collapsed headers and
+  provide **All saved windows** for older entries without changing saved settings.
 - Keep the Confirmations tab responsive with all dialogs shown by virtualizing
   variable-height rows and caching sorted dialog text, previews, and search data.
   Expanded text, bulk actions, smooth scrolling, and draggable scrollbars remain available.
