@@ -5,7 +5,9 @@ use crate::{
 };
 use eve_wrench_core::{
     SettingsKind,
-    display_settings::{SettingsDocument, boolean, integer, overview, scene::TargetLayout, text},
+    display_settings::{
+        SettingsDocument, boolean, chat, integer, overview, scene::TargetLayout, text,
+    },
     window_layout::{Neocom, NeocomSide},
 };
 use gpui_kit::prelude::FluentBuilder as _;
@@ -29,6 +31,8 @@ use std::{
     path::PathBuf,
 };
 
+#[path = "settings_chats.rs"]
+mod chats_ui;
 #[path = "settings_overview.rs"]
 mod overview_ui;
 #[cfg(test)]
@@ -41,15 +45,23 @@ pub(super) enum Page {
     Targets,
     Neocom,
     Fighters,
+    Chats,
 }
 impl Page {
-    const ALL: [Self; 4] = [Self::Overview, Self::Targets, Self::Neocom, Self::Fighters];
+    const ALL: [Self; 5] = [
+        Self::Overview,
+        Self::Targets,
+        Self::Neocom,
+        Self::Fighters,
+        Self::Chats,
+    ];
     fn id(self) -> &'static str {
         match self {
             Self::Overview => "overview",
             Self::Targets => "targets",
             Self::Neocom => "neocom",
             Self::Fighters => "fighters",
+            Self::Chats => "chats",
         }
     }
 }
@@ -64,6 +76,8 @@ enum Field {
     TabName(String),
     TabColor(String),
     Width(i64, String),
+    ChatWidth(String),
+    ChatInput(String),
 }
 impl Field {
     fn kind(&self) -> SettingsKind {
@@ -77,9 +91,10 @@ impl Field {
 }
 
 pub(super) struct DisplayEditor {
+    pub(super) preview_revision: u64,
     store: Entity<Store>,
     pub(super) character: PathBuf,
-    account: Option<PathBuf>,
+    pub(super) account: Option<PathBuf>,
     docs: HashMap<PathBuf, SettingsDocument>,
     loading: HashSet<PathBuf>,
     saving: HashSet<PathBuf>,
@@ -101,9 +116,63 @@ pub(super) struct DisplayEditor {
     overview_section: usize,
     selected_groups_only: bool,
     appearance_background: bool,
+    columns_top: std::rc::Rc<std::cell::Cell<f32>>,
+    pub(super) chats: Vec<String>,
+    selected_chat: Option<String>,
+}
+
+pub(super) struct DisplayChanged;
+impl EventEmitter<DisplayChanged> for DisplayEditor {}
+
+#[derive(Default)]
+pub(super) struct PreviewSettings {
+    character: Option<SettingsDocument>,
+    account: Option<SettingsDocument>,
+    pub(super) target_count: usize,
+}
+impl PreviewSettings {
+    pub(super) fn doc(&self, kind: SettingsKind) -> Option<&SettingsDocument> {
+        if kind == SettingsKind::Char {
+            self.character.as_ref()
+        } else {
+            self.account.as_ref()
+        }
+    }
+    pub(super) fn neocom(&self, fallback: Neocom) -> Neocom {
+        neocom(self.doc(SettingsKind::Char), fallback)
+    }
+    pub(super) fn targets(&self) -> TargetLayout {
+        self.account
+            .as_ref()
+            .map(TargetLayout::read)
+            .unwrap_or_default()
+    }
+}
+fn neocom(doc: Option<&SettingsDocument>, fallback: Neocom) -> Neocom {
+    let Some(doc) = doc else {
+        return fallback;
+    };
+    Neocom {
+        width: doc
+            .value("ui", "neocomWidth")
+            .and_then(integer)
+            .unwrap_or(fallback.width),
+        side: match doc.value("ui", "neocomAlign").and_then(integer) {
+            Some(6) => NeocomSide::Right,
+            Some(5) => NeocomSide::Left,
+            _ => fallback.side,
+        },
+    }
 }
 
 impl DisplayEditor {
+    pub(super) fn preview(&self) -> PreviewSettings {
+        PreviewSettings {
+            character: self.doc(SettingsKind::Char).cloned(),
+            account: self.doc(SettingsKind::User).cloned(),
+            target_count: self.target_count,
+        }
+    }
     pub(super) fn new(character: PathBuf, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let store = Store::global(cx);
         let group_search = cx.new(|cx| {
@@ -120,10 +189,12 @@ impl DisplayEditor {
             }),
             cx.subscribe(&group_search, |this, _, _: &InputEvent, cx| {
                 this.group_page = 0;
+                cx.emit(DisplayChanged);
                 cx.notify();
             }),
         ];
         let mut result = Self {
+            preview_revision: 0,
             store,
             character: character.clone(),
             account: None,
@@ -148,8 +219,25 @@ impl DisplayEditor {
             overview_section: 0,
             selected_groups_only: true,
             appearance_background: false,
+            columns_top: Default::default(),
+            chats: Vec::new(),
+            selected_chat: None,
         };
         result.load(character, false, window, cx);
+        let accounts = result.accounts(cx);
+        let default = result
+            .store
+            .read(cx)
+            .config()
+            .default_sources
+            .account_path
+            .as_ref()
+            .and_then(|p| accounts.iter().find(|(q, _)| q == &PathBuf::from(p)))
+            .or_else(|| accounts.first())
+            .map(|(path, _)| path.clone());
+        if let Some(path) = default {
+            result.select_account(path, window, cx);
+        }
         result
     }
     fn path(&self, kind: SettingsKind) -> Option<&PathBuf> {
@@ -167,6 +255,10 @@ impl DisplayEditor {
             .path(kind)
             .cloned()
             .ok_or_else(|| t!("display.chooseAccount").to_string())?;
+        if self.loading.contains(&path) || self.saving.contains(&path) {
+            return Err(t!("display.busy").to_string());
+        }
+        self.preview_revision = self.preview_revision.wrapping_add(1);
         self.docs
             .get_mut(&path)
             .ok_or_else(|| t!("formationEditor.loading").to_string())
@@ -177,29 +269,32 @@ impl DisplayEditor {
             || !self.saving.is_empty()
     }
     pub(super) fn neocom(&self, fallback: Neocom) -> Neocom {
-        let Some(doc) = self.doc(SettingsKind::Char) else {
-            return fallback;
-        };
-        Neocom {
-            width: doc
-                .value("ui", "neocomWidth")
-                .and_then(integer)
-                .unwrap_or(fallback.width),
-            side: match doc.value("ui", "neocomAlign").and_then(integer) {
-                Some(6) => NeocomSide::Right,
-                Some(5) => NeocomSide::Left,
-                _ => fallback.side,
-            },
-        }
+        neocom(self.doc(SettingsKind::Char), fallback)
     }
     pub(super) fn targets(&self) -> TargetLayout {
         self.doc(SettingsKind::User)
             .map(TargetLayout::read)
             .unwrap_or_default()
     }
+    pub(super) fn set_overview_sort(
+        &mut self,
+        tab: i64,
+        column: &str,
+        ascending: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.error = self
+            .doc_mut(SettingsKind::Char)
+            .and_then(|doc| overview::set_sort(doc, tab, column, ascending))
+            .err();
+        self.status = None;
+        cx.emit(DisplayChanged);
+        cx.notify();
+    }
     pub(super) fn open_page(&mut self, page: Page, cx: &mut Context<Self>) {
         self.page = page;
         self.scroll.reset();
+        cx.emit(DisplayChanged);
         cx.notify();
     }
     pub(super) fn geometry_context(
@@ -238,6 +333,7 @@ impl DisplayEditor {
         self.screen = screen;
         self.default_target_origin = origin;
         self.layout_dirty = dirty;
+        cx.emit(DisplayChanged);
         cx.notify();
     }
     fn load(&mut self, path: PathBuf, discard: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -269,6 +365,7 @@ impl DisplayEditor {
                 match result {
                     Ok(doc) => {
                         this.docs.insert(path, doc);
+                        this.preview_revision = this.preview_revision.wrapping_add(1);
                         if !was_dirty {
                             this.inputs.retain(|key, _| !key.starts_with(&prefix));
                             this.invalid.retain(|key, _| !key.starts_with(&prefix));
@@ -277,6 +374,7 @@ impl DisplayEditor {
                     }
                     Err(error) => this.error = Some(error),
                 }
+                cx.emit(DisplayChanged);
                 cx.notify();
             })
             .ok();
@@ -305,6 +403,7 @@ impl DisplayEditor {
         self.saving.insert(path.clone());
         self.error = None;
         self.status = None;
+        cx.emit(DisplayChanged);
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let result = cx.background_spawn(async move { doc.save() }).await;
@@ -313,6 +412,7 @@ impl DisplayEditor {
                 match result {
                     Ok((doc, _)) => {
                         this.docs.insert(path, doc);
+                        this.preview_revision = this.preview_revision.wrapping_add(1);
                         this.status = Some(
                             t!(if kind == SettingsKind::User {
                                 "display.accountSaved"
@@ -325,6 +425,7 @@ impl DisplayEditor {
                     }
                     Err(error) => this.error = Some(error),
                 }
+                cx.emit(DisplayChanged);
                 cx.notify();
             })
             .ok();
@@ -351,6 +452,7 @@ impl DisplayEditor {
         } else {
             self.error = None;
         }
+        cx.emit(DisplayChanged);
         cx.notify();
     }
     fn set(
@@ -370,6 +472,7 @@ impl DisplayEditor {
         } else {
             self.error = None;
         }
+        cx.emit(DisplayChanged);
         cx.notify();
     }
     fn field_value(&self, field: &Field) -> String {
@@ -432,6 +535,12 @@ impl DisplayEditor {
                 .map(|d| overview::column_width(d, *tab, column))
                 .unwrap_or(100)
                 .to_string(),
+            Field::ChatWidth(name) => chat::ChatLayout::read(doc, &format!("chatchannel_{name}"))
+                .member_width
+                .to_string(),
+            Field::ChatInput(name) => chat::ChatLayout::read(doc, &format!("chatchannel_{name}"))
+                .input_height
+                .to_string(),
         }
     }
     fn apply_field(&mut self, field: &Field, value: &str) -> Result<(), String> {
@@ -489,6 +598,12 @@ impl DisplayEditor {
             Field::Width(tab, column) => {
                 overview::set_width(doc, *tab, column, value.parse().map_err(|_| bad())?)
             }
+            Field::ChatWidth(name) => {
+                chat::ChatLayout::set(doc, name, "members", value.parse().map_err(|_| bad())?)
+            }
+            Field::ChatInput(name) => {
+                chat::ChatLayout::set(doc, name, "input", value.parse().map_err(|_| bad())?)
+            }
         }
     }
     fn input(
@@ -527,6 +642,7 @@ impl DisplayEditor {
                                 this.error = Some(error);
                             }
                         }
+                        cx.emit(DisplayChanged);
                         cx.notify();
                     }
                 },
@@ -553,7 +669,9 @@ impl DisplayEditor {
                         .small()
                         .disabled(
                             self.doc(kind).is_none()
-                                || self.path(kind).is_some_and(|p| self.saving.contains(p)),
+                                || self.path(kind).is_some_and(|p| {
+                                    self.saving.contains(p) || self.loading.contains(p)
+                                }),
                         ),
                 ),
             )
@@ -636,6 +754,8 @@ impl DisplayEditor {
                             .disabled(self.target_count <= 1)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.target_count = this.target_count.saturating_sub(1).max(1);
+                                this.preview_revision = this.preview_revision.wrapping_add(1);
+                                cx.emit(DisplayChanged);
                                 cx.notify();
                             })),
                     )
@@ -648,6 +768,8 @@ impl DisplayEditor {
                             .disabled(self.target_count >= 12)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.target_count = (this.target_count + 1).min(12);
+                                this.preview_revision = this.preview_revision.wrapping_add(1);
+                                cx.emit(DisplayChanged);
                                 cx.notify();
                             })),
                     ),
@@ -823,15 +945,24 @@ impl DisplayEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.account.as_ref() == Some(&path) {
+            return;
+        }
+        if !self.accounts(cx).iter().any(|(p, _)| p == &path) {
+            return;
+        }
         self.status = None;
         self.account = Some(path.clone());
+        self.preview_revision = self.preview_revision.wrapping_add(1);
         self.selected_tab = None;
         self.selected_preset = None;
         self.load(path, false, window, cx);
+        cx.emit(DisplayChanged);
         cx.notify();
     }
     fn accounts(&self, cx: &App) -> Vec<(PathBuf, String)> {
-        self.store
+        let mut accounts: Vec<_> = self
+            .store
             .read(cx)
             .data()
             .into_iter()
@@ -849,7 +980,15 @@ impl DisplayEditor {
                     })
                     .collect::<Vec<_>>()
             })
-            .collect()
+            .collect();
+        accounts.sort_by_key(|(path, _)| {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .and_then(|s| s.strip_prefix("core_user_"))
+                .and_then(|s| s.parse::<u64>().ok())
+                .unwrap_or_default()
+        });
+        accounts
     }
 }
 
@@ -874,19 +1013,12 @@ fn hint(key: &str, cx: &App) -> AnyElement {
 
 impl Render for DisplayEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let accounts = self.accounts(cx);
-        let selected = self.account.clone();
-        let view = cx.entity().downgrade();
-        let account_label = selected
-            .as_ref()
-            .and_then(|p| accounts.iter().find(|(q, _)| p == q))
-            .map(|(_, n)| n.clone())
-            .unwrap_or_else(|| t!("display.chooseAccount").to_string());
         let content = match self.page {
             Page::Overview => self.render_overview(window, cx),
             Page::Targets => self.render_targets(window, cx),
             Page::Neocom => self.render_neocom(window, cx),
             Page::Fighters => self.render_fighters(window, cx),
+            Page::Chats => self.render_chats(window, cx),
         };
         let saves = [SettingsKind::User, SettingsKind::Char]
             .into_iter()
@@ -962,38 +1094,6 @@ impl Render for DisplayEditor {
                     .flex_none()
                     .p_3()
                     .gap_2()
-                    .child(
-                        Button::new("display-account")
-                            .outline()
-                            .small()
-                            .w_full()
-                            .label(account_label)
-                            .tooltip(t!("display.accountHint").to_string())
-                            .dropdown_menu(move |menu, _, _| {
-                                accounts.iter().fold(
-                                    menu.max_h(px(300.)).scrollable(true),
-                                    |menu, (path, name)| {
-                                        let path = path.clone();
-                                        let current = selected.as_ref() == Some(&path);
-                                        let view = view.clone();
-                                        menu.item(
-                                            PopupMenuItem::new(name.clone())
-                                                .checked(current)
-                                                .on_click(move |_, window, cx| {
-                                                    view.update(cx, |this, cx| {
-                                                        this.select_account(
-                                                            path.clone(),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                                }),
-                                        )
-                                    },
-                                )
-                            }),
-                    )
                     .child(h_flex().gap_1().children(Page::ALL.into_iter().map(|page| {
                         Button::new(SharedString::from(format!("display-page-{}", page.id())))
                             .ghost()
@@ -1004,6 +1104,7 @@ impl Render for DisplayEditor {
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.page = page;
                                 this.scroll.reset();
+                                cx.emit(DisplayChanged);
                                 cx.notify();
                             }))
                     }))),

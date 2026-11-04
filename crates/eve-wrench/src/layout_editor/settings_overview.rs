@@ -1,7 +1,8 @@
 use super::*;
+use gpui_kit::base::ScrollbarHandle as _;
 
 impl DisplayEditor {
-    fn picker(
+    pub(super) fn picker(
         &self,
         id: &str,
         label: String,
@@ -41,6 +42,7 @@ impl DisplayEditor {
             .doc_mut(SettingsKind::User)
             .and_then(|doc| overview::set_tab(doc, tab, field, value));
         self.error = result.err();
+        cx.emit(DisplayChanged);
         cx.notify();
     }
     pub(super) fn render_overview(
@@ -74,6 +76,7 @@ impl DisplayEditor {
                 this.selected_tab = Some(key);
                 this.selected_preset = None;
                 this.scroll.reset();
+                cx.emit(DisplayChanged);
                 cx.notify();
             },
             cx,
@@ -101,6 +104,7 @@ impl DisplayEditor {
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.overview_section = index;
                                     this.scroll.reset();
+                                    cx.emit(DisplayChanged);
                                     cx.notify();
                                 }))
                         }),
@@ -231,7 +235,23 @@ impl DisplayEditor {
                 }),
         );
         let mut rows = Vec::new();
-        for (index, column) in tab.columns.iter().enumerate() {
+        // Text inputs are relatively expensive to lay out. Keep their state in
+        // `inputs`, but only build controls around the visible column rows.
+        const ROW_HEIGHT: f32 = 80.;
+        let offset = -f32::from(self.scroll.handle.offset().y);
+        let height = f32::from(self.scroll.handle.viewport_bounds().size.height).max(400.);
+        let first = (((offset - self.columns_top.get()) / ROW_HEIGHT)
+            .floor()
+            .max(0.) as usize)
+            .saturating_sub(2)
+            .min(tab.columns.len());
+        let end = ((((offset + height - self.columns_top.get()) / ROW_HEIGHT)
+            .ceil()
+            .max(0.) as usize)
+            + 2)
+        .max(first)
+        .min(tab.columns.len());
+        for (index, column) in tab.columns.iter().enumerate().take(end).skip(first) {
             let Some((_, _, _)) = overview::COLUMNS.iter().find(|c| c.0 == column) else {
                 continue;
             };
@@ -248,6 +268,10 @@ impl DisplayEditor {
             );
             rows.push(
                 v_flex()
+                    .id(SharedString::from(format!("overview-column-row-{column}")))
+                    .test_support()
+                    .h(px(ROW_HEIGHT))
+                    .flex_none()
                     .gap_1()
                     .pb_2()
                     .border_b_1()
@@ -330,9 +354,65 @@ impl DisplayEditor {
             .child(color)
             .child(filter)
             .child(bracket)
+            .child(
+                Button::new("brackets-clear")
+                    .outline()
+                    .small()
+                    .w_full()
+                    .label(t!("display.clearBrackets").to_string())
+                    .tooltip(t!("display.clearBracketsHint").to_string())
+                    .on_click(cx.listener({
+                        let key = tab.key.clone();
+                        move |this, _, _, cx| {
+                            this.error = this
+                                .doc_mut(SettingsKind::User)
+                                .and_then(|doc| overview::set_clear_brackets(doc, &key))
+                                .err();
+                            this.status = None;
+                            cx.emit(DisplayChanged);
+                            cx.notify();
+                        }
+                    })),
+            )
             .child(modes)
             .child(hint("display.columnsHint", cx))
-            .children(rows)
+            .child(
+                v_flex()
+                    .relative()
+                    .child(div().h(px(first as f32 * ROW_HEIGHT)).flex_none())
+                    .children(rows)
+                    .child(
+                        div()
+                            .h(px((tab.columns.len() - end) as f32 * ROW_HEIGHT))
+                            .flex_none(),
+                    )
+                    .child({
+                        let top = self.columns_top.clone();
+                        let scroll = self.scroll.handle.clone();
+                        canvas(
+                            move |bounds, _, _| {
+                                let offset = f32::from(
+                                    bounds.top()
+                                        - scroll.viewport_bounds().top()
+                                        - scroll.offset().y,
+                                );
+                                if (offset - top.get()).abs() > 0.5 {
+                                    top.set(offset);
+                                    true
+                                } else {
+                                    false
+                                }
+                            },
+                            |_, changed, window, cx| {
+                                if changed {
+                                    cx.notify(window.current_view());
+                                }
+                            },
+                        )
+                        .absolute()
+                        .inset_0()
+                    }),
+            )
             .into_any_element()
     }
     fn move_column(&mut self, key: &str, index: usize, delta: isize, cx: &mut Context<Self>) {
@@ -428,6 +508,7 @@ impl DisplayEditor {
                 this.selected_preset = Some(key);
                 this.group_page = 0;
                 this.scroll.reset();
+                cx.emit(DisplayChanged);
                 cx.notify();
             },
             cx,
@@ -539,6 +620,7 @@ impl DisplayEditor {
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.selected_groups_only = !this.selected_groups_only;
                         this.group_page = 0;
+                        cx.emit(DisplayChanged);
                         cx.notify();
                     })),
             )
@@ -554,6 +636,7 @@ impl DisplayEditor {
                             .disabled(page == 0)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.group_page = this.group_page.saturating_sub(1);
+                                cx.emit(DisplayChanged);
                                 cx.notify();
                             })),
                     )
@@ -566,6 +649,7 @@ impl DisplayEditor {
                             .disabled(page + 1 >= pages)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.group_page += 1;
+                                cx.emit(DisplayChanged);
                                 cx.notify();
                             })),
                     ),
@@ -754,6 +838,7 @@ impl DisplayEditor {
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.appearance_background = background;
                             this.scroll.reset();
+                            cx.emit(DisplayChanged);
                             cx.notify();
                         }))
                     })),

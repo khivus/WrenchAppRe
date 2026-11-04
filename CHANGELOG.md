@@ -14,6 +14,15 @@
 
 ### Added
 
+- Pair layout characters with their selected/default account at startup and show
+  both selectors in the top row. Preview overview tab strips, sample object rows,
+  saved sort direction, and single-line column headings; click headers to stage sorting.
+- Add a clear-bracket filter excluding drones, wrecks and collidables, and account
+  chat controls for member-list width/visibility and input height, all saved with backups.
+- Preview sample messages/names and stacked chat tabs, plus D-scan, cargo/inventory,
+  drones, fleet broadcasts, watch list, selected-item and probe-scanner contents.
+- Cache the layout canvas during settings scrolling and render only nearby overview
+  column controls to reduce work per frame while retaining smooth scrolling/scrollbars.
 - Add separate station and citadel contexts, plus fighter previews for citadel
   control (3 squadrons), carriers (4) and supercarriers (5).
 - Add locked-target previews with account-specific anchors, horizontal/vertical

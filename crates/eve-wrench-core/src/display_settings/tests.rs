@@ -34,6 +34,13 @@ fn chat_dividers_and_sorting_save_only_their_settings_with_backups() {
     let mut doc = SettingsDocument::load(&file.0).unwrap();
     let visible = vec!["ICON".into(), "NAME".into(), "DISTANCE".into()];
     assert_eq!(sort(&doc, 0, &visible), Some(("DISTANCE".into(), true)));
+    doc.set(
+        "ui",
+        "SortHeadersSettings2",
+        json!({(width_key(0)):{"tuple":[null,true]}}),
+    )
+    .unwrap();
+    assert_eq!(sort(&doc, 0, &visible), None);
     set_sort(&mut doc, 0, "NAME", false).unwrap();
     assert_eq!(sort(&doc, 0, &visible), Some(("NAME".into(), false)));
     assert_eq!(sort(&doc, 1, &visible), Some(("DISTANCE".into(), true)));

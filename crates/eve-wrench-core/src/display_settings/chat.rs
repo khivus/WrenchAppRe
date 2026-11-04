@@ -54,6 +54,7 @@ impl ChatLayout {
                 .clamp(30, 96),
             show_members: value(&format!("{name}_usermode"))
                 .and_then(boolean)
+                .or_else(|| value("chat_show_member_list_default").and_then(boolean))
                 .unwrap_or(true),
         }
     }

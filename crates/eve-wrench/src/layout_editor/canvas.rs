@@ -115,7 +115,7 @@ impl Mapping {
 }
 
 impl LayoutEditor {
-    fn mapping(&self) -> Mapping {
+    pub(super) fn mapping(&self) -> Mapping {
         Mapping::new(
             self.canvas_bounds.get(),
             model::screen(&self.windows),
@@ -323,6 +323,7 @@ impl LayoutEditor {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let theme = cx.theme();
+        let muted = theme.muted_foreground;
         let accent = ui::target_color();
         let selected = self.selected.as_deref() == Some(state.key.as_str());
         let hovered = self.hovered.as_deref() == Some(state.key.as_str());
@@ -409,19 +410,18 @@ impl LayoutEditor {
             )
             .when(!collapsed, |this| {
                 this.when_some(
-                    self.render_overview_contents(state, mapping, cx),
+                    self.render_window_contents(state, mapping, cx),
                     |this, content| this.child(content),
                 )
             })
             .when((selected || hovered) && !collapsed, |this| {
                 this.child(
                     div()
-                        .flex_1()
-                        .flex()
-                        .items_center()
-                        .justify_center()
+                        .absolute()
+                        .bottom(px(3.))
+                        .right(px(3.))
                         .text_size(px(10.))
-                        .text_color(theme.muted_foreground)
+                        .text_color(muted)
                         .child(dims),
                 )
             })
@@ -718,7 +718,7 @@ impl LayoutEditor {
             screen_height: screen.height,
         };
         let screen_bounds = mapping.rect(&full(0, screen.width));
-        let neocom = self.settings.read(cx).neocom(self.neocom);
+        let neocom = self.preview_settings.neocom(self.neocom);
         let neocom_x = match neocom.side {
             NeocomSide::Left => 0,
             NeocomSide::Right => screen.width - neocom.width,
@@ -739,6 +739,7 @@ impl LayoutEditor {
             .id("layout-canvas")
             .relative()
             .flex_1()
+            .size_full()
             .min_w_0()
             .overflow_hidden()
             .bg(linear_gradient(

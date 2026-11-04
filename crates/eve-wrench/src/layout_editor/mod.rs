@@ -1,10 +1,12 @@
 mod canvas;
+mod canvas_cache;
 mod inspector;
 mod model;
 #[cfg(test)]
 mod preview_tests;
 mod scene_preview;
 mod settings;
+mod window_preview;
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -143,7 +145,13 @@ pub struct LayoutEditor {
     settings: Entity<settings::DisplayEditor>,
     settings_open: bool,
     settings_pending: bool,
+    settings_revision: u64,
+    preview_settings: settings::PreviewSettings,
+    canvas_preview: Option<Entity<canvas_cache::CanvasPreview>>,
+    canvas_stamp: Option<canvas_cache::CanvasStamp>,
     show_targets: bool,
+    preview_overview_tabs: std::collections::HashMap<String, i64>,
+    preview_stack_tabs: std::collections::HashMap<String, String>,
     rect_inputs: [Entity<InputState>; 4],
     _subscriptions: Vec<Subscription>,
 }
@@ -188,10 +196,17 @@ impl LayoutEditor {
         }));
 
         let settings = cx.new(|cx| settings::DisplayEditor::new(file_path.clone(), window, cx));
-        subscriptions.push(cx.observe(&settings, |this, settings, cx| {
-            this.settings_pending = settings.read(cx).pending();
-            cx.notify();
-        }));
+        subscriptions.push(cx.subscribe(
+            &settings,
+            |this, settings, _: &settings::DisplayChanged, cx| {
+                this.settings_pending = settings.read(cx).pending();
+                if this.settings_revision != settings.read(cx).preview_revision {
+                    this.settings_revision = settings.read(cx).preview_revision;
+                    this.preview_settings = settings.read(cx).preview();
+                }
+                cx.notify();
+            },
+        ));
         let mut editor = Self {
             store,
             file_path,
@@ -222,7 +237,13 @@ impl LayoutEditor {
             settings,
             settings_open: false,
             settings_pending: false,
+            settings_revision: 0,
+            preview_settings: Default::default(),
+            canvas_preview: None,
+            canvas_stamp: None,
             show_targets: false,
+            preview_overview_tabs: Default::default(),
+            preview_stack_tabs: Default::default(),
             rect_inputs,
             _subscriptions: subscriptions,
         };
@@ -236,6 +257,15 @@ impl LayoutEditor {
 
     pub fn has_pending_edits(&self) -> bool {
         self.is_dirty() || self.saving || self.settings_pending
+    }
+    pub(crate) fn select_account(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings
+            .update(cx, |settings, cx| settings.select_account(path, window, cx));
     }
 
     fn snapshot(&self) -> Snapshot {
@@ -606,7 +636,28 @@ impl LayoutEditor {
 
 impl Render for LayoutEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.settings_revision != self.settings.read(cx).preview_revision {
+            let settings = self.settings.read(cx);
+            self.settings_revision = settings.preview_revision;
+            self.preview_settings = settings.preview();
+            self.settings_pending = settings.pending();
+        }
         let dirty = self.is_dirty() || self.saving;
+        let mut chats: Vec<_> = self
+            .windows
+            .iter()
+            .filter_map(|w| {
+                eve_wrench_core::display_settings::chat::channel(w.id()).map(|_| w.id().to_owned())
+            })
+            .collect();
+        chats.sort();
+        chats.dedup();
+        if self.settings.read(cx).chats != chats {
+            self.settings.update(cx, |settings, cx| {
+                settings.chats = chats;
+                cx.notify();
+            });
+        }
         let screen = model::screen(&self.windows);
         let dims = (screen.width, screen.height);
         let origin = eve_wrench_core::display_settings::scene::TargetLayout::default()
@@ -664,7 +715,7 @@ impl Render for LayoutEditor {
                         .min_h_0()
                         .items_stretch()
                         .child(self.render_list(cx))
-                        .child(self.render_canvas(cx))
+                        .child(self.cached_canvas(cx))
                         .child(if self.settings_open {
                             self.settings.clone().into_any_element()
                         } else {

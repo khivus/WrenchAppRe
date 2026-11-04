@@ -10,6 +10,7 @@ use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _, h_flex, v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use rust_i18n::t;
 
@@ -118,6 +119,9 @@ impl MainView {
             })
             .unwrap_or_default();
         let selected_account = entry.as_ref().map(|e| e.path.clone());
+        let layout_account = self.editor_account(data, cx);
+        let layout_accounts = profile.map(|p| p.accounts.clone()).unwrap_or_default();
+        let layout_account_view = cx.entity().downgrade();
         let controls = h_flex()
             .id("editor-context")
             .test_support()
@@ -241,7 +245,65 @@ impl MainView {
                         )
                     }),
                 ),
-            );
+            )
+            .when(tab == Tab::WindowLayout, |this| {
+                this.child(
+                    div().flex_1().min_w_0().child(
+                        Button::new("editor-account")
+                            .outline()
+                            .small()
+                            .w_full()
+                            .label(format!(
+                                "{}: {}",
+                                t!("defaultSource.account"),
+                                layout_account
+                                    .as_ref()
+                                    .map(|e| format!("{} · {}", e.display_name, e.id))
+                                    .unwrap_or_else(|| t!("editors.noAccount").to_string())
+                            ))
+                            .disabled(layout_accounts.is_empty())
+                            .dropdown_menu(move |menu, _, _| {
+                                layout_accounts.iter().fold(
+                                    menu.max_h(px(280.)).scrollable(true),
+                                    |menu, entry| {
+                                        let path = entry.path.clone();
+                                        let current =
+                                            layout_account.as_ref().is_some_and(|e| e.path == path);
+                                        menu.item(
+                                            PopupMenuItem::new(format!(
+                                                "{} · {}",
+                                                entry.display_name, entry.id
+                                            ))
+                                            .checked(current)
+                                            .on_click(view_action(
+                                                &layout_account_view,
+                                                move |main, _, cx| {
+                                                    if let Some(profile) =
+                                                        main.store.read(cx).data().and_then(|d| {
+                                                            d.servers
+                                                                .iter()
+                                                                .flat_map(|s| &s.profiles)
+                                                                .find(|p| {
+                                                                    p.accounts
+                                                                        .iter()
+                                                                        .any(|e| e.path == path)
+                                                                })
+                                                                .map(|p| p.path.clone())
+                                                        })
+                                                    {
+                                                        main.editor_accounts
+                                                            .insert(profile, path.clone());
+                                                    }
+                                                    cx.notify();
+                                                },
+                                            )),
+                                        )
+                                    },
+                                )
+                            }),
+                    ),
+                )
+            });
         let body = if let Some(entry) = entry {
             let path = entry.path.clone();
             if tab == Tab::Probes {
@@ -303,7 +365,13 @@ impl MainView {
                     ));
                     self.layout_editors.insert(path.clone(), editor);
                 }
-                self.layout_editors[&path].clone().into_any_element()
+                let editor = self.layout_editors[&path].clone();
+                if let Some(account) = self.editor_account(data, cx) {
+                    editor.update(cx, |editor, cx| {
+                        editor.select_account(account.path.into(), window, cx)
+                    });
+                }
+                editor.into_any_element()
             }
         } else {
             div()

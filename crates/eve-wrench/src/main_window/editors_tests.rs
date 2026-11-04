@@ -605,7 +605,7 @@ fn layout_tab_preserves_drafts_blocks_updates_and_syncs_only_characters(cx: &mut
     cx.run_until_parked();
     cx.update_window(handle, |_, window, cx| {
         window.find("editor-character");
-        assert!(window.try_find("editor-account").is_none());
+        window.find("editor-account");
         assert!(window.try_find("copy-settings").is_none());
         assert!(window.find("layout-editor").bounds().bottom() <= window.viewport_size().height);
         window.click("list-bytes:overview", cx);

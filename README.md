@@ -281,6 +281,20 @@ character file does not identify which account owns it.
   are preserved. Object-group filters are searchable; color tags and backgrounds
   can be enabled, recolored or set to blink. Built-in presets must first be stored
   in the account file before their filters can be edited here.
+- The account selector sits beside the character at the top and starts with the
+  profile's selected/default account. Verify that pairing when editing another
+  character; EVE does not store a character-to-account link in these files.
+- Overview previews show every tab assigned to each window and five sample objects
+  with the enabled fields. Click a tab to switch the preview; click a column header
+  to stage ascending/descending sorting for **Save character**. Headers stay on one
+  line and clip to the saved widths. **Use clear brackets** stages an ordinary EVE
+  filter that excludes drones, wrecks and collidables, preserving existing presets.
+- Chat previews include sample messages, names and an input area. Under
+  **Display settings → Chats**, change member-list width, input height and member
+  visibility, then **Save account**. EVE shares these account settings between
+  characters using the same chat window name. Stacked chats have preview tabs.
+  D-scan, cargo/inventory, drones, fleet/broadcasts, watch list, selected item and
+  probe-scanner windows also show sample contents. These samples are temporary.
 - **Save account** and **Save character** apply these display edits separately,
   always creating a verified backup and refusing conflicting external changes.
   Save or reset window-layout drafts before saving character display settings.

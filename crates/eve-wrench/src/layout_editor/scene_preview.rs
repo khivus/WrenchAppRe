@@ -1,8 +1,5 @@
 use super::{LayoutEditor, WindowRect, canvas::Mapping, model};
-use eve_wrench_core::{
-    SettingsKind,
-    display_settings::{overview, scene},
-};
+use eve_wrench_core::{SettingsKind, display_settings::scene};
 use gpui_kit::{
     assets::IconName,
     component::{ActiveTheme as _, Icon, h_flex, v_flex},
@@ -13,7 +10,7 @@ use rust_i18n::t;
 impl LayoutEditor {
     pub(super) fn render_scene_overlays(&self, mapping: Mapping, cx: &App) -> Vec<AnyElement> {
         let screen = model::screen(&self.windows);
-        let settings = self.settings.read(cx);
+        let settings = &self.preview_settings;
         let mut elements = Vec::new();
         let rect = |x, y, width, height| WindowRect {
             x,
@@ -173,96 +170,5 @@ impl LayoutEditor {
             }
         }
         elements
-    }
-
-    pub(super) fn render_overview_contents(
-        &self,
-        window: &eve_wrench_core::window_layout::WindowState,
-        mapping: Mapping,
-        cx: &App,
-    ) -> Option<AnyElement> {
-        let instance = if window.id() == "overview" {
-            0
-        } else {
-            window
-                .id()
-                .strip_prefix("overview_")?
-                .parse::<usize>()
-                .ok()?
-        };
-        let settings = self.settings.read(cx);
-        let account = settings.doc(SettingsKind::User)?;
-        let character = settings.doc(SettingsKind::Char)?;
-        let tab_id = account
-            .value("overview", "tabsByWindowInstanceID")?
-            .get(instance)?
-            .as_array()?
-            .first()
-            .and_then(eve_wrench_core::display_settings::integer)?;
-        let tab = overview::tabs(account)
-            .into_iter()
-            .find(|t| t.id == tab_id)?;
-        let raw = account
-            .value("overview", "tabsettings_new")?
-            .get(&tab.key)?;
-        let visible = raw
-            .get("bytes:tabColumns")
-            .map(|v| overview::strings(Some(v)))
-            .unwrap_or_else(|| {
-                overview::DEFAULT_COLUMNS
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect()
-            });
-        let columns: Vec<_> =
-            tab.columns
-                .iter()
-                .filter(|c| visible.contains(c))
-                .map(|column| {
-                    let label = t!(format!("display.columns.{column}")).to_string();
-                    div()
-                        .w(px(overview::column_width(character, tab.id, column) as f32
-                            * mapping.scale))
-                        .flex_none()
-                        .overflow_hidden()
-                        .border_r_1()
-                        .border_color(cx.theme().border)
-                        .px(px(2.))
-                        .child(label)
-                })
-                .collect();
-        let tab_color = tab
-            .color
-            .map(|c| {
-                rgb(((c[0] * 255.) as u32) << 16
-                    | ((c[1] * 255.) as u32) << 8
-                    | (c[2] * 255.) as u32)
-            })
-            .unwrap_or(rgb(0xaaaaaa));
-        Some(
-            v_flex()
-                .overflow_hidden()
-                .text_size(px((11. * mapping.scale).clamp(7., 11.)))
-                .child(div().px_1().text_color(tab_color).child(tab.name))
-                .child(
-                    h_flex()
-                        .border_b_1()
-                        .border_color(cx.theme().border)
-                        .children(columns),
-                )
-                .child(
-                    div()
-                        .px_1()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(format!("{}: {}", t!("display.filterPreset"), tab.preset)),
-                )
-                .child(
-                    div()
-                        .px_1()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(format!("{}: {}", t!("display.bracketPreset"), tab.bracket)),
-                )
-                .into_any_element(),
-        )
     }
 }

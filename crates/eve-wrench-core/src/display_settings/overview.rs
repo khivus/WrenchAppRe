@@ -205,12 +205,11 @@ pub fn assigned_tabs(doc: &SettingsDocument, instance: usize) -> Vec<OverviewTab
 pub fn sort(doc: &SettingsDocument, tab: i64, visible: &[String]) -> Option<(String, bool)> {
     let saved = doc
         .value("ui", "SortHeadersSettings2")
-        .and_then(|v| v.get(width_key(tab)))
-        .and_then(|v| v.get("tuple"))
-        .and_then(Value::as_array)
-        .filter(|a| a.len() == 2)
-        .and_then(|a| Some((text(&a[0])?.to_owned(), boolean(&a[1])?)));
-    if let Some((column, ascending)) = saved {
+        .and_then(|v| v.get(width_key(tab)));
+    if let Some(saved) = saved {
+        let values = saved.get("tuple")?.as_array().filter(|a| a.len() == 2)?;
+        let column = text(&values[0])?.to_owned();
+        let ascending = boolean(&values[1])?;
         return visible.contains(&column).then_some((column, ascending));
     }
     visible
