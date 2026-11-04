@@ -14,6 +14,9 @@
 
 ### Added
 
+- Add search and bulk preview visibility controls to the layout window list:
+  show/hide all matching windows or toggle a category, without changing saved
+  settings. Search and global actions stay above the scrolling list.
 - Add **Reset position and size** for a window or a complete stack, with undo,
   mandatory backups, checks for external edits, and replacement from a fully
   written temporary file. It removes only saved geometry; flags, styles, stack

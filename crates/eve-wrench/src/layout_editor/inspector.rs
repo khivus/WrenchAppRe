@@ -95,10 +95,27 @@ impl LayoutEditor {
             }))
     }
 
-    // Windows grouped by what they're for, open ones first in each group.
-    pub(super) fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let listed: Vec<&WindowState> = self
-            .windows
+    fn matches_search(&self, window: &WindowState, query: &str) -> bool {
+        if query.is_empty() {
+            return true;
+        }
+        let mut text = format!("{} {}", window.key, self.preview_name(window));
+        if window.is_stack() {
+            for member in self.preview_members(&window.key) {
+                text.push_str(&format!(
+                    " {} {}",
+                    member.key,
+                    model::window_name(member.id())
+                ));
+            }
+        }
+        let text = text.to_lowercase();
+        query.split_whitespace().all(|term| text.contains(term))
+    }
+
+    // Search narrows the list and bulk controls, without hiding canvas windows.
+    fn listed_windows<'a>(&'a self, query: &'a str) -> impl Iterator<Item = &'a WindowState> {
+        self.windows
             .iter()
             .filter(|w| model::listable(w, &self.windows) && self.in_location(w))
             .filter(|w| {
@@ -113,7 +130,34 @@ impl LayoutEditor {
                         .find(|old| old.key == w.key)
                         .is_some_and(|old| old != *w)
             })
+            .filter(move |w| self.matches_search(w, query))
+    }
+
+    fn set_scope_preview_hidden(
+        &mut self,
+        category: Option<model::Category>,
+        hidden: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let query = self.search.read(cx).value().trim().to_lowercase();
+        let keys: Vec<_> = self
+            .listed_windows(&query)
+            .filter(|w| w.rect.is_some() && category.is_none_or(|c| model::category(w) == c))
+            .map(|w| w.key.clone())
             .collect();
+        self.set_previews_hidden(keys, hidden, cx);
+    }
+
+    // Windows grouped by what they're for, active ones first in each group.
+    pub(super) fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let query = self.search.read(cx).value().trim().to_lowercase();
+        let listed: Vec<_> = self.listed_windows(&query).collect();
+        let can_show = listed
+            .iter()
+            .any(|w| w.rect.is_some() && self.preview_hidden.contains(&w.key));
+        let can_hide = listed
+            .iter()
+            .any(|w| w.rect.is_some() && !self.preview_hidden.contains(&w.key));
 
         let mut sections: Vec<Div> = Vec::new();
         for category in model::Category::ALL {
@@ -128,30 +172,165 @@ impl LayoutEditor {
             list.sort_by_cached_key(|w| {
                 (!self.active_window(w), self.preview_name(w).to_lowercase())
             });
-            let open = list.iter().filter(|w| self.active_window(w)).count();
+            let shown = list
+                .iter()
+                .filter(|w| {
+                    w.rect.is_some()
+                        && !self.preview_hidden.contains(&w.key)
+                        && (self.show_all_windows || self.active_window(w))
+                })
+                .count();
+            let has_geometry = list.iter().any(|w| w.rect.is_some());
+            let all_hidden = list
+                .iter()
+                .filter(|w| w.rect.is_some())
+                .all(|w| self.preview_hidden.contains(&w.key));
             let title = t!(format!("layoutEditor.category.{}", category.id())).to_string();
             sections.push(
                 v_flex()
-                    .child(div().px_3().pt_3().pb_0p5().child(ui::section_divider(
-                        title,
-                        Some(format!("{open}/{}", list.len())),
-                        cx,
-                    )))
+                    .child(
+                        h_flex()
+                            .px_3()
+                            .pt_3()
+                            .pb_0p5()
+                            .gap_1()
+                            .child(div().flex_1().min_w_0().child(ui::section_divider(
+                                title.clone(),
+                                Some(format!("{shown}/{}", list.len())),
+                                cx,
+                            )))
+                            .child(
+                                Button::new(SharedString::from(format!(
+                                    "preview-category-{}",
+                                    category.id()
+                                )))
+                                .ghost()
+                                .xsmall()
+                                .icon(if all_hidden {
+                                    IconName::EyeOff
+                                } else {
+                                    IconName::Eye
+                                })
+                                .selected(all_hidden)
+                                .toggled(all_hidden)
+                                .disabled(!has_geometry)
+                                .tooltip(if all_hidden {
+                                    t!("layoutEditor.showCategory", category = title).to_string()
+                                } else {
+                                    t!("layoutEditor.hideCategory", category = title).to_string()
+                                })
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.set_scope_preview_hidden(
+                                            Some(category),
+                                            !all_hidden,
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            ),
+                    )
                     .children(list.into_iter().map(|w| self.render_list_row(w, cx))),
             );
         }
 
-        self.list_scroll
-            .view(
-                "window-list",
-                v_flex().pb_3().children(sections),
-                |this| &mut this.list_scroll,
-                cx,
-            )
+        v_flex()
             .w(px(240.))
             .flex_none()
+            .min_h_0()
             .border_r_1()
             .border_color(cx.theme().border)
+            .child(
+                v_flex()
+                    .flex_none()
+                    .p_2()
+                    .gap_2()
+                    .child(
+                        Input::new(&self.search)
+                            .id("layout-search")
+                            .small()
+                            .cleanable(true)
+                            .prefix(
+                                Icon::new(IconName::Search)
+                                    .xsmall()
+                                    .text_color(cx.theme().muted_foreground),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("preview-show-all")
+                                    .outline()
+                                    .xsmall()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .label(
+                                        if query.is_empty() {
+                                            t!("layoutEditor.showAll")
+                                        } else {
+                                            t!("layoutEditor.showMatches")
+                                        }
+                                        .to_string(),
+                                    )
+                                    .tooltip(t!("layoutEditor.bulkVisibilityHint").to_string())
+                                    .disabled(!can_show)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.set_scope_preview_hidden(None, false, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("preview-hide-all")
+                                    .outline()
+                                    .xsmall()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .label(
+                                        if query.is_empty() {
+                                            t!("layoutEditor.hideAll")
+                                        } else {
+                                            t!("layoutEditor.hideMatches")
+                                        }
+                                        .to_string(),
+                                    )
+                                    .tooltip(t!("layoutEditor.bulkVisibilityHint").to_string())
+                                    .disabled(!can_hide)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.set_scope_preview_hidden(None, true, cx)
+                                    })),
+                            ),
+                    ),
+            )
+            .child(
+                self.list_scroll
+                    .view(
+                        "window-list",
+                        v_flex()
+                            .pb_3()
+                            .when(sections.is_empty(), |this| {
+                                this.child(
+                                    div()
+                                        .id("window-list-empty")
+                                        .test_support()
+                                        .p_4()
+                                        .text_sm()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(
+                                            if query.is_empty() {
+                                                t!("layoutEditor.noWindows")
+                                            } else {
+                                                t!("layoutEditor.noMatchingWindows")
+                                            }
+                                            .to_string(),
+                                        ),
+                                )
+                            })
+                            .children(sections),
+                        |this| &mut this.list_scroll,
+                        cx,
+                    )
+                    .flex_1(),
+            )
     }
 
     fn render_flag(

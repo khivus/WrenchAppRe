@@ -260,6 +260,10 @@ character file does not identify which account owns it.
 - Use **Hide in preview** or the eye button in the window list to temporarily
   remove a window from the canvas. Click again to show it; saved EVE settings
   are unaffected.
+- Search the window list by name or ID, including chat tabs inside stacks.
+  Use **Show all** / **Hide all** or each category's eye button for bulk preview
+  controls. A search narrows these actions to matching rows in the current view;
+  searching itself leaves the canvas unchanged.
 - **Reset position and size** stages removal of a window's saved geometry.
   Stack tabs reset together, keeping their links and other state. Undo or Reset
   can cancel the draft. Log the character out before saving. A reset save always

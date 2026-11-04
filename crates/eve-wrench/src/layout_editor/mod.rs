@@ -1,6 +1,8 @@
 mod canvas;
 mod inspector;
 mod model;
+#[cfg(test)]
+mod preview_tests;
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -141,6 +143,7 @@ pub struct LayoutEditor {
     show_all_windows: bool,
     // Local preview visibility; never included in saved layouts or undo history.
     preview_hidden: HashSet<String>,
+    search: Entity<InputState>,
     location: Location,
     rect_inputs: [Entity<InputState>; 4],
     _subscriptions: Vec<Subscription>,
@@ -175,6 +178,15 @@ impl LayoutEditor {
             ));
             input
         });
+        let search = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t!("layoutEditor.search").to_string())
+        });
+        subscriptions.push(cx.subscribe(&search, |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.list_scroll.reset();
+                cx.notify();
+            }
+        }));
 
         let mut editor = Self {
             store,
@@ -201,6 +213,7 @@ impl LayoutEditor {
             snap: true,
             show_all_windows: false,
             preview_hidden: HashSet::new(),
+            search,
             location: Location::InSpace,
             rect_inputs,
             _subscriptions: subscriptions,
@@ -231,13 +244,28 @@ impl LayoutEditor {
     }
 
     fn set_preview_hidden(&mut self, key: &str, hidden: bool, cx: &mut Context<Self>) {
-        if hidden {
-            self.preview_hidden.insert(key.to_string());
-            if self.hovered.as_deref() == Some(key) {
-                self.hovered = None;
+        self.set_previews_hidden([key.to_string()], hidden, cx);
+    }
+
+    fn set_previews_hidden(
+        &mut self,
+        keys: impl IntoIterator<Item = String>,
+        hidden: bool,
+        cx: &mut Context<Self>,
+    ) {
+        for key in keys {
+            if hidden {
+                self.preview_hidden.insert(key);
+            } else {
+                self.preview_hidden.remove(&key);
             }
-        } else {
-            self.preview_hidden.remove(key);
+        }
+        if self
+            .hovered
+            .as_ref()
+            .is_some_and(|key| self.preview_hidden.contains(key))
+        {
+            self.hovered = None;
         }
         cx.notify();
     }
@@ -1080,8 +1108,12 @@ mod tests {
             });
             window.render_frame(cx);
 
+            let search_bounds = window.find("layout-search").bounds();
+            let actions_bounds = window.find("preview-hide-all").bounds();
             crate::scrolling::tests::check_vertical(&editor, |e| &mut e.list_scroll, window, cx);
             assert_eq!(editor.read(cx).inspector_scroll.handle.offset().y, px(0.));
+            assert_eq!(window.find("layout-search").bounds(), search_bounds);
+            assert_eq!(window.find("preview-hide-all").bounds(), actions_bounds);
 
             crate::scrolling::tests::check_vertical(
                 &editor,
