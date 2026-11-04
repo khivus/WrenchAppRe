@@ -8,6 +8,7 @@ mod catalog;
 pub mod config;
 pub mod confirmations;
 pub mod copy;
+pub mod display_settings;
 pub mod drone_groups;
 pub mod esi;
 pub mod formations;
