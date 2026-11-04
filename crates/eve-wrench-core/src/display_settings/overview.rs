@@ -187,6 +187,117 @@ pub fn set_tab(
 pub fn width_key(tab: i64) -> String {
     format!("json:{{\"tuple\":[\"bytes:overviewScroll2\",{tab}]}}")
 }
+pub fn assigned_tabs(doc: &SettingsDocument, instance: usize) -> Vec<OverviewTab> {
+    let tabs = tabs(doc);
+    let assigned = doc
+        .value("overview", "tabsByWindowInstanceID")
+        .and_then(|v| v.get(instance))
+        .map(|v| ids(Some(v)));
+    match assigned {
+        Some(ids) => ids
+            .into_iter()
+            .filter_map(|id| tabs.iter().find(|t| t.id == id).cloned())
+            .collect(),
+        None if instance == 0 => tabs,
+        _ => Vec::new(),
+    }
+}
+pub fn sort(doc: &SettingsDocument, tab: i64, visible: &[String]) -> Option<(String, bool)> {
+    let saved = doc
+        .value("ui", "SortHeadersSettings2")
+        .and_then(|v| v.get(width_key(tab)))
+        .and_then(|v| v.get("tuple"))
+        .and_then(Value::as_array)
+        .filter(|a| a.len() == 2)
+        .and_then(|a| Some((text(&a[0])?.to_owned(), boolean(&a[1])?)));
+    if let Some((column, ascending)) = saved {
+        return visible.contains(&column).then_some((column, ascending));
+    }
+    visible
+        .iter()
+        .find(|c| c.as_str() == "DISTANCE")
+        .or_else(|| visible.first())
+        .cloned()
+        .map(|c| (c, true))
+}
+pub fn set_sort(
+    doc: &mut SettingsDocument,
+    tab: i64,
+    column: &str,
+    ascending: bool,
+) -> Result<(), String> {
+    if !COLUMNS.iter().any(|c| c.0 == column) {
+        return Err("Unsupported sort column".into());
+    }
+    let mut all = doc
+        .value("ui", "SortHeadersSettings2")
+        .cloned()
+        .unwrap_or(json!({}));
+    all.as_object_mut()
+        .ok_or("Unsupported sort settings")?
+        .insert(
+            width_key(tab),
+            json!({"tuple":[format!("bytes:{column}"),ascending]}),
+        );
+    doc.set("ui", "SortHeadersSettings2", all)
+}
+pub(super) fn validate_sort(value: &Value) -> bool {
+    value.as_object().is_some_and(|rows| {
+        rows.iter().all(|(key, value)| {
+            !key.contains("overviewScroll2")
+                || value
+                    .get("tuple")
+                    .and_then(Value::as_array)
+                    .is_some_and(|a| {
+                        a.len() == 2
+                            && (a[0].is_null() || text(&a[0]).is_some())
+                            && boolean(&a[1]).is_some()
+                    })
+        })
+    })
+}
+/// Store an ordinary EVE bracket preset, keeping existing presets and tab data.
+/// Unlike showAll, this list still excludes deployable drones, wrecks and LCOs.
+pub fn set_clear_brackets(doc: &mut SettingsDocument, tab: &str) -> Result<(), String> {
+    const DRONES: &[i64] = &[
+        100, 101, 299, 470, 544, 549, 639, 640, 641, 1023, 1159, 1537, 1652, 1653, 1997,
+    ];
+    let groups: Vec<_> = group_catalog()
+        .iter()
+        .filter(|(id, name)| !DRONES.contains(id) && *id != 186 && !name.contains("Collidable"))
+        .map(|(id, _)| *id)
+        .collect();
+    let preset =
+        json!({"bytes:groups":groups,"bytes:filteredStates":[],"bytes:alwaysShownStates":[]});
+    let mut draft = doc.clone();
+    let mut presets = draft
+        .value("overview", "overviewProfilePresets")
+        .cloned()
+        .unwrap_or(json!({}));
+    let map = presets
+        .as_object_mut()
+        .ok_or("Unsupported overview presets")?;
+    let mut index = 1;
+    let key = loop {
+        let key = if index == 1 {
+            "utf8:Wrench Clear Brackets".to_owned()
+        } else {
+            format!("utf8:Wrench Clear Brackets {index}")
+        };
+        if map.get(&key).is_none_or(|p| p == &preset) {
+            break key;
+        }
+        index += 1;
+    };
+    map.insert(key.clone(), preset);
+    draft.set("overview", "overviewProfilePresets", presets)?;
+    set_tab(&mut draft, tab, "bracket", json!(key))?;
+    for field in ["showAll", "showNone", "showSpecials"] {
+        set_tab(&mut draft, tab, field, json!(false))?;
+    }
+    *doc = draft;
+    Ok(())
+}
 pub fn column_width(doc: &SettingsDocument, tab: i64, column: &str) -> i64 {
     doc.value("ui", "SortHeadersSizes")
         .and_then(|v| v.get(width_key(tab)))

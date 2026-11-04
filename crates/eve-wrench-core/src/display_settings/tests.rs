@@ -3,6 +3,83 @@ use super::{overview::*, scene::*};
 use crate::window_layout::WindowState;
 
 struct Fixture(PathBuf);
+
+#[test]
+fn chat_dividers_and_sorting_save_only_their_settings_with_backups() {
+    let file = Fixture::new("user", true);
+    let original = fs::read(&file.0).unwrap();
+    let mut doc = SettingsDocument::load(&file.0).unwrap();
+    chat::ChatLayout::set(&mut doc, "local", "members", 180).unwrap();
+    chat::ChatLayout::set(&mut doc, "local", "input", 40).unwrap();
+    chat::ChatLayout::set(&mut doc, "local", "visible", 0).unwrap();
+    assert!(chat::ChatLayout::set(&mut doc, "local", "members", 201).is_err());
+    assert!(chat::ChatLayout::set(&mut doc, "local", "input", 20).is_err());
+    assert!(chat::ChatLayout::set(&mut doc, "../local", "members", 100).is_err());
+    let (doc, backup) = doc.save().unwrap();
+    assert_eq!(fs::read(backup.unwrap()).unwrap(), original);
+    assert_eq!(
+        chat::ChatLayout::read(Some(&doc), "chatchannel_local"),
+        chat::ChatLayout {
+            member_width: 180,
+            input_height: 40,
+            show_members: false
+        }
+    );
+    assert_eq!(
+        chat::ChatLayout::read(Some(&doc), "chatchannel_fleet").member_width,
+        128
+    );
+    assert_eq!(doc.value("ui", "neocomWidth"), Some(&json!(48)));
+    let file = Fixture::new("char", false);
+    let mut doc = SettingsDocument::load(&file.0).unwrap();
+    let visible = vec!["ICON".into(), "NAME".into(), "DISTANCE".into()];
+    assert_eq!(sort(&doc, 0, &visible), Some(("DISTANCE".into(), true)));
+    set_sort(&mut doc, 0, "NAME", false).unwrap();
+    assert_eq!(sort(&doc, 0, &visible), Some(("NAME".into(), false)));
+    assert_eq!(sort(&doc, 1, &visible), Some(("DISTANCE".into(), true)));
+    assert!(chat::ChatLayout::set(&mut doc, "local", "members", 150).is_err());
+    let (doc, backup) = doc.save().unwrap();
+    assert!(backup.is_some());
+    assert_eq!(sort(&doc, 0, &visible), Some(("NAME".into(), false)));
+}
+
+#[test]
+fn clear_bracket_filter_preserves_existing_presets_and_excludes_clutter() {
+    let file = Fixture::new("user", true);
+    let mut doc = SettingsDocument::load(&file.0).unwrap();
+    let original =
+        doc.value("overview", "overviewProfilePresets").unwrap()["utf8:My preset"].clone();
+    set_clear_brackets(&mut doc, "int:0").unwrap();
+    let presets = doc.value("overview", "overviewProfilePresets").unwrap();
+    assert_eq!(presets["utf8:My preset"], original);
+    let groups = ids(Some(&presets["utf8:Wrench Clear Brackets"]["bytes:groups"]));
+    assert!(groups.contains(&27) && groups.contains(&10)); // ships and gates
+    for id in [100, 101, 299, 186, 226, 319] {
+        assert!(!groups.contains(&id));
+    }
+    let tab = &doc.value("overview", "tabsettings_new").unwrap()["int:0"];
+    assert_eq!(tab["bytes:bracket"], "utf8:Wrench Clear Brackets");
+    assert_eq!(tab["bytes:showAll"], false);
+    assert_eq!(tab["bytes:future"], 42);
+    set_clear_brackets(&mut doc, "int:0").unwrap();
+    assert_eq!(
+        doc.value("overview", "overviewProfilePresets")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(set_clear_brackets(&mut doc, "int:99").is_err());
+    assert_eq!(
+        doc.value("overview", "overviewProfilePresets")
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .len(),
+        2
+    );
+}
 impl Fixture {
     fn new(kind: &str, checksum: bool) -> Self {
         let nonce = SystemTime::now()

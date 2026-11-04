@@ -16,6 +16,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+pub mod chat;
 pub mod overview;
 pub mod scene;
 
@@ -259,6 +260,10 @@ fn validate(kind: SettingsKind, section: &str, key: &str, value: &Value) -> Resu
                 })
         }),
         (SettingsKind::Char, "ui", "SortHeadersSizes") => overview::validate_widths(value),
+        (SettingsKind::Char, "ui", "SortHeadersSettings2") => overview::validate_sort(value),
+        (SettingsKind::User, "ui", key) if chat::setting_key(key).is_some() => {
+            chat::validate(key, value)
+        }
         (SettingsKind::User, "overview", key) => overview::validate_setting(key, value),
         _ => false,
     };
