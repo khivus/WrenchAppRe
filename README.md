@@ -245,8 +245,9 @@ screen they were saved on. Scroll to zoom and drag the background to pan.
 
 The default view reconstructs likely visible windows from saved chat membership,
 assigned overview instances, minimized state and scanner embedding preferences.
-Collapsed windows appear as headers. **All saved windows** also shows historical
-dialogs, inactive tabs and old instances. These filters affect only the preview;
+Collapsed windows appear as headers. **Visible windows only** is enabled by
+default; turn it off to include historical dialogs, inactive tabs and old instances.
+These filters affect only the preview;
 the files do not provide an exact snapshot of a running client's visibility.
 Overview assignments are used when the profile's account files agree, since a
 character file does not identify which account owns it.
@@ -260,9 +261,10 @@ character file does not identify which account owns it.
 - Use **Hide in preview** or the eye button in the window list to temporarily
   remove a window from the canvas. Click again to show it; saved EVE settings
   are unaffected.
-- Search the window list by name or ID, including chat tabs inside stacks.
+- Search all windows by name or ID, including inactive windows and hidden chat
+  tabs inside stacks, regardless of the visibility filter or docked/in-space view.
   Use **Show all** / **Hide all** or each category's eye button for bulk preview
-  controls. A search narrows these actions to matching rows in the current view;
+  controls. A search narrows these actions to matching rows;
   searching itself leaves the canvas unchanged.
 - **Reset position and size** stages removal of a window's saved geometry.
   Stack tabs reset together, keeping their links and other state. Undo or Reset

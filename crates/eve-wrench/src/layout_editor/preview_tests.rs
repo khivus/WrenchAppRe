@@ -7,7 +7,7 @@ use std::path::PathBuf;
 fn bulk_visibility_and_search_are_scoped_reversible_and_preview_only(cx: &mut TestAppContext) {
     let (_, _, files) = crate::main_window::editors_tests::setup(cx);
     let path = PathBuf::from(&files.character);
-    let mut windows: Vec<_> = [
+    let windows: Vec<_> = [
         "overview",
         "overview_1",
         "droneview",
@@ -19,6 +19,9 @@ fn bulk_visibility_and_search_are_scoped_reversible_and_preview_only(cx: &mut Te
         "notepad",
         "100",
         "chatchannel_player_4321",
+        "chatchannel_player_9876",
+        "999",
+        "chatchannel_player_2468",
     ]
     .into_iter()
     .map(|id| WindowState {
@@ -31,19 +34,27 @@ fn bulk_visibility_and_search_are_scoped_reversible_and_preview_only(cx: &mut Te
             screen_width: 1920,
             screen_height: 1080,
         }),
-        open: id != "overview_99",
+        open: !matches!(
+            id,
+            "overview_99" | "chatchannel_player_9876" | "chatchannel_player_2468"
+        ),
         locked: false,
         minimized: false,
         compact: None,
         light_background: None,
-        stack: None,
+        stack: match id {
+            "chatchannel_player_4321" | "chatchannel_player_9876" => Some("bytes:100".into()),
+            "chatchannel_player_2468" => Some("bytes:999".into()),
+            _ => None,
+        },
     })
     .collect();
-    windows.last_mut().unwrap().stack = Some("bytes:100".into());
     let decoded = blue_marshal::decode(&std::fs::read(&path).unwrap()).unwrap();
     let mut root = blue_marshal::to_json(&decoded.value);
     root["bytes:windows"] = serde_json::json!({"bytes:stacksWindows": {"tuple": ["long:1", {
-        "bytes:chatchannel_player_4321": "bytes:100"
+        "bytes:chatchannel_player_4321": "bytes:100",
+        "bytes:chatchannel_player_9876": "bytes:100",
+        "bytes:chatchannel_player_2468": "bytes:999"
     }]}});
     std::fs::write(
         &path,
@@ -120,6 +131,9 @@ fn bulk_visibility_and_search_are_scoped_reversible_and_preview_only(cx: &mut Te
         let visible = editor.read(cx).visible().count();
         search("  OvErViEw  ", window, cx);
         window.find("list-bytes:overview_1");
+        window.find("list-bytes:overview_99");
+        assert!(window.try_find("window-bytes:overview_99").is_none());
+        assert!(!editor.read(cx).show_all_windows);
         assert!(window.try_find("list-bytes:market").is_none());
         assert_eq!(
             editor.read(cx).visible().count(),
@@ -138,6 +152,14 @@ fn bulk_visibility_and_search_are_scoped_reversible_and_preview_only(cx: &mut Te
         window.find("window-bytes:market");
         window.click("preview-show-all", cx);
         window.render_frame(cx);
+        search("lobby", window, cx);
+        window.find("list-bytes:lobbyWnd");
+        assert!(window.try_find("window-bytes:lobbyWnd").is_none());
+        search("9876", window, cx);
+        window.find("list-bytes:100");
+        search("2468", window, cx);
+        window.find("list-bytes:999");
+        assert!(window.try_find("window-bytes:999").is_none());
         search("overview 1", window, cx);
         window.find("list-bytes:overview_1");
         assert!(window.try_find("list-bytes:overview").is_none());
@@ -167,6 +189,9 @@ fn bulk_visibility_and_search_are_scoped_reversible_and_preview_only(cx: &mut Te
         window.click("preview-show-all", cx);
         window.render_frame(cx);
         assert_eq!(editor.read(cx).visible().count(), visible);
+        assert!(window.try_find("list-bytes:overview_99").is_none());
+        assert!(window.try_find("list-bytes:999").is_none());
+        assert!(window.try_find("list-bytes:lobbyWnd").is_none());
         assert!(!editor.read(cx).is_dirty());
         assert!(!editor.read(cx).history.can_undo());
         assert_eq!(std::fs::read(&path).unwrap(), original);

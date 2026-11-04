@@ -27,7 +27,7 @@ impl LayoutEditor {
         let key = window.key.clone();
         let visibility_key = window.key.clone();
         let hidden = self.preview_hidden.contains(&window.key);
-        let active = self.active_window(window);
+        let active = self.active_window(window) && self.in_location(window);
         let (fg, muted) = (theme.foreground, theme.muted_foreground);
         h_flex()
             .id(SharedString::from(format!("list-{}", window.key)))
@@ -101,7 +101,7 @@ impl LayoutEditor {
         }
         let mut text = format!("{} {}", window.key, self.preview_name(window));
         if window.is_stack() {
-            for member in self.preview_members(&window.key) {
+            for member in model::members(&self.windows, &window.key) {
                 text.push_str(&format!(
                     " {} {}",
                     member.key,
@@ -113,22 +113,25 @@ impl LayoutEditor {
         query.split_whitespace().all(|term| text.contains(term))
     }
 
-    // Search narrows the list and bulk controls, without hiding canvas windows.
+    // Search covers every stored window, independent of preview/location filters.
+    // It narrows bulk controls without changing what is drawn on the canvas.
     fn listed_windows<'a>(&'a self, query: &'a str) -> impl Iterator<Item = &'a WindowState> {
         self.windows
             .iter()
-            .filter(|w| model::listable(w, &self.windows) && self.in_location(w))
-            .filter(|w| {
-                self.show_all_windows
-                    || self.active_window(w)
-                    || self.selected.as_deref() == Some(w.key.as_str())
-                    || self.preview_hidden.contains(&w.key)
-                    || self.geometry_resets.contains(&w.key)
-                    || self
-                        .saved
-                        .iter()
-                        .find(|old| old.key == w.key)
-                        .is_some_and(|old| old != *w)
+            .filter(|w| model::listable(w, &self.windows))
+            .filter(move |w| {
+                !query.is_empty()
+                    || (self.in_location(w)
+                        && (self.show_all_windows
+                            || self.active_window(w)
+                            || self.selected.as_deref() == Some(w.key.as_str())
+                            || self.preview_hidden.contains(&w.key)
+                            || self.geometry_resets.contains(&w.key)
+                            || self
+                                .saved
+                                .iter()
+                                .find(|old| old.key == w.key)
+                                .is_some_and(|old| old != *w)))
             })
             .filter(move |w| self.matches_search(w, query))
     }
@@ -176,6 +179,7 @@ impl LayoutEditor {
                 .iter()
                 .filter(|w| {
                     w.rect.is_some()
+                        && self.in_location(w)
                         && !self.preview_hidden.contains(&w.key)
                         && (self.show_all_windows || self.active_window(w))
                 })

@@ -594,18 +594,18 @@ impl LayoutEditor {
                     })),
             )
             .child(
-                Button::new("show-all-windows")
+                Button::new("visible-windows-only")
                     .ghost()
                     .xsmall()
-                    .icon(if self.show_all_windows {
+                    .icon(if !self.show_all_windows {
                         IconName::Eye
                     } else {
                         IconName::EyeOff
                     })
-                    .label(t!("layoutEditor.allSavedWindows").to_string())
-                    .tooltip(t!("layoutEditor.allSavedWindowsHint").to_string())
-                    .selected(self.show_all_windows)
-                    .toggled(self.show_all_windows)
+                    .label(t!("layoutEditor.visibleWindowsOnly").to_string())
+                    .tooltip(t!("layoutEditor.visibleWindowsOnlyHint").to_string())
+                    .selected(!self.show_all_windows)
+                    .toggled(!self.show_all_windows)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.show_all_windows = !this.show_all_windows;
                         cx.notify();

@@ -840,13 +840,13 @@ mod tests {
                 editor.read(cx).preview_name(stack),
                 model::window_name("chatchannel_local")
             );
-            window.click("show-all-windows", cx);
+            window.click("visible-windows-only", cx);
             window.render_frame(cx);
             for id in historical {
                 window.find(format!("window-bytes:{id}"));
                 window.find(format!("list-bytes:{id}"));
             }
-            window.click("show-all-windows", cx);
+            window.click("visible-windows-only", cx);
             window.render_frame(cx);
             assert!(window.try_find("window-bytes:999").is_none());
             window.click("preview-visibility-bytes:100", cx);

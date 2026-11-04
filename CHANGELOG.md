@@ -7,7 +7,7 @@
 - Default the layout preview and list to likely visible saved windows, using chat
   membership, current overview assignments, minimized state and scanner embedding
   preferences instead of historical open flags alone. Show collapsed headers and
-  provide **All saved windows** for older entries without changing saved settings.
+  provide a **Visible windows only** filter without changing saved settings.
 - Keep the Confirmations tab responsive with all dialogs shown by virtualizing
   variable-height rows and caching sorted dialog text, previews, and search data.
   Expanded text, bulk actions, smooth scrolling, and draggable scrollbars remain available.
@@ -16,7 +16,8 @@
 
 - Add search and bulk preview visibility controls to the layout window list:
   show/hide all matching windows or toggle a category, without changing saved
-  settings. Search and global actions stay above the scrolling list.
+  settings. Search includes hidden and inactive windows and stack tabs even with
+  visibility filtering enabled. Search and global actions stay above the scrolling list.
 - Add **Reset position and size** for a window or a complete stack, with undo,
   mandatory backups, checks for external edits, and replacement from a fully
   written temporary file. It removes only saved geometry; flags, styles, stack
