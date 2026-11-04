@@ -254,8 +254,15 @@ character file does not identify which account owns it.
 
 - Drag windows to move them and drag their edges to resize them, with snapping
   to the screen border, the Neocom and other windows, or type exact positions
-- Switch between **In space** and **Docked** to see the windows each shows:
-  overviews and scanners in space, station services when docked
+- Choose **In space**, **Docked in station**, or **Docked in citadel** from the
+  scene dropdown. Station and citadel inventories are separated; EVE stores one
+  shared lobby rectangle, so both use its saved position with the appropriate title.
+- Fighter scenes offer **Citadel control (3)**, **Carrier (4)** and
+  **Supercarrier (5)** squadron previews, using the character's saved detached
+  fighter position. These modes simulate panel geometry, not the live ship's capabilities.
+- Toggle **Locked targets** to preview target placement. In **Display settings**,
+  select the account used by this character to read and edit its anchor, horizontal
+  or vertical arrangement, and anchor lock. Target count affects only the preview.
 - Open, close, lock, minimize, compact mode and light background per window;
   chat stacks move as one
 - Use **Hide in preview** or the eye button in the window list to temporarily
@@ -266,6 +273,19 @@ character file does not identify which account owns it.
   Use **Show all** / **Hide all** or each category's eye button for bulk preview
   controls. A search narrows these actions to matching rows;
   searching itself leaves the canvas unchanged.
+- Open **Display settings** for overview tabs, columns, filters, colors and brackets,
+  target placement, fighter positioning, and Neocom width, side and button order.
+  Column order and visibility, tab names/colors, filter presets and bracket modes
+  save to the selected account. Column widths, fighter coordinates and Neocom
+  settings save to the selected character. Existing button groups and unknown data
+  are preserved. Object-group filters are searchable; color tags and backgrounds
+  can be enabled, recolored or set to blink. Built-in presets must first be stored
+  in the account file before their filters can be edited here.
+- **Save account** and **Save character** apply these display edits separately,
+  always creating a verified backup and refusing conflicting external changes.
+  Save or reset window-layout drafts before saving character display settings.
+  The canvas uses schematic fighters, targets and Neocom icons, and overview
+  headers with the configured widths; it does not reproduce live objects or targets.
 - **Reset position and size** stages removal of a window's saved geometry.
   Stack tabs reset together, keeping their links and other state. Undo or Reset
   can cancel the draft. Log the character out before saving. A reset save always

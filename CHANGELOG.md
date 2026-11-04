@@ -14,6 +14,16 @@
 
 ### Added
 
+- Add separate station and citadel contexts, plus fighter previews for citadel
+  control (3 squadrons), carriers (4) and supercarriers (5).
+- Add locked-target previews with account-specific anchors, horizontal/vertical
+  wrapping and configurable sample counts. Preview Neocom width, side and buttons.
+- Add **Display settings** in the layout toolbar. Edit overview tab names/colors,
+  presets, brackets, visible columns, order and character-specific widths; edit
+  object-group/state filters, color tags, backgrounds and blinking. Configure
+  target anchors, detached fighter coordinates, and Neocom width/side/button order.
+  Account and character saves are separate, always backed up, and checked for
+  external changes. New forms use smooth scrolling and visible scrollbars.
 - Add search and bulk preview visibility controls to the layout window list:
   show/hide all matching windows or toggle a category, without changing saved
   settings. Search includes hidden and inactive windows and stack tabs even with

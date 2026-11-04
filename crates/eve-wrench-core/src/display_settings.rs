@@ -5,7 +5,7 @@
 use crate::{
     SettingsKind,
     backups::auto_backup,
-    marshal::{encode_settings_json, filetime_now, strip_type_prefix},
+    marshal::{encode_settings_json, filetime_now},
 };
 use serde_json::{Value, json};
 use std::{
@@ -31,7 +31,8 @@ pub struct SettingsDocument {
 }
 
 pub fn text(value: &Value) -> Option<&str> {
-    value.as_str().map(strip_type_prefix)
+    let s = value.as_str()?;
+    s.strip_prefix("bytes:").or_else(|| s.strip_prefix("utf8:"))
 }
 pub fn integer(value: &Value) -> Option<i64> {
     value
@@ -84,6 +85,27 @@ impl SettingsDocument {
     pub fn reset(&mut self) {
         self.root = self.original_root.clone();
         self.changed.clear();
+    }
+
+    // Rebase drafts over unrelated changes (for example, moving a window).
+    // Conflicts in a setting being edited remain explicit and never overwrite disk.
+    pub fn refresh(&self) -> Result<Self, String> {
+        let mut fresh = Self::load(&self.path)?;
+        for (section, key) in &self.changed {
+            if fresh.value(section, key) != Self::get(&self.original_root, section, key) {
+                return Err(format!(
+                    "{section}.{key} changed on disk. Discard and reload before editing it."
+                ));
+            }
+            fresh.set(
+                section,
+                key,
+                self.value(section, key)
+                    .ok_or("Missing draft setting")?
+                    .clone(),
+            )?;
+        }
+        Ok(fresh)
     }
 
     pub fn set(&mut self, section: &str, key: &str, value: Value) -> Result<(), String> {

@@ -126,8 +126,14 @@ impl WindowActivity {
                 | "StationCorpDeliveries"
                 | "CapsuleerDeliveries"
                 | "StationCorpHangars"
+                | "StructureItemHangar"
+                | "StructureShipHangar"
+                | "StructureCorpHangars"
                 | "solar_system_map_panel"
         ) || id.starts_with("StationCorpHangar_")
+            || id.starts_with("StructureItemHangar_")
+            || id.starts_with("StructureShipHangar_")
+            || id.starts_with("StructureCorpHangar_")
     }
 }
 

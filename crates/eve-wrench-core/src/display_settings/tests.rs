@@ -136,6 +136,32 @@ fn invalid_values_and_cross_kind_settings_cannot_be_written() {
 }
 
 #[test]
+fn legacy_duplicate_group_ids_survive_unrelated_filter_edits() {
+    let file = Fixture::new("user", false);
+    let mut doc = SettingsDocument::load(&file.0).unwrap();
+    let mut presets = doc
+        .value("overview", "overviewProfilePresets")
+        .cloned()
+        .unwrap();
+    presets["utf8:My preset"]["bytes:groups"] = json!([27, 547, 27]);
+    doc.set("overview", "overviewProfilePresets", presets)
+        .unwrap();
+    let (mut doc, _) = doc.save().unwrap();
+    let mut presets = doc
+        .value("overview", "overviewProfilePresets")
+        .cloned()
+        .unwrap();
+    presets["utf8:My preset"]["bytes:filteredStates"] = json!([12]);
+    doc.set("overview", "overviewProfilePresets", presets)
+        .unwrap();
+    let (doc, _) = doc.save().unwrap();
+    assert_eq!(
+        doc.value("overview", "overviewProfilePresets").unwrap()["utf8:My preset"]["bytes:groups"],
+        json!([27, 547, 27])
+    );
+}
+
+#[test]
 fn reset_and_unchanged_values_create_no_write_or_backup() {
     let file = Fixture::new("char", false);
     let original = fs::read(&file.0).unwrap();
@@ -147,6 +173,22 @@ fn reset_and_unchanged_values_create_no_write_or_backup() {
     doc.reset();
     assert!(doc.save().unwrap().1.is_none());
     assert_eq!(fs::read(&file.0).unwrap(), original);
+}
+
+#[test]
+fn drafts_rebase_unrelated_geometry_and_reject_setting_conflicts() {
+    let file = Fixture::new("char", false);
+    let mut doc = SettingsDocument::load(&file.0).unwrap();
+    doc.set("ui", "neocomWidth", json!(60)).unwrap();
+    let mut root = doc.original_root.clone();
+    root["bytes:windows"] = json!({"bytes:future":true});
+    fs::write(&file.0, encode_settings_json(&root, false).unwrap()).unwrap();
+    let refreshed = doc.refresh().unwrap();
+    assert!(refreshed.is_dirty());
+    let (saved, _) = refreshed.save().unwrap();
+    assert_eq!(saved.original_root["bytes:windows"]["bytes:future"], true);
+    assert!(doc.refresh().unwrap_err().contains("changed on disk"));
+    assert!(group_catalog().iter().any(|(id, _)| *id == 547));
 }
 
 #[test]
@@ -191,4 +233,36 @@ fn station_citadel_and_fighter_scenes_stay_separate() {
     assert_eq!(Scene::CitadelControl.fighter_count(), 3);
     assert_eq!(Scene::Carrier.fighter_count(), 4);
     assert_eq!(Scene::Supercarrier.fighter_count(), 5);
+}
+
+#[test]
+fn missing_target_anchor_follows_selected_item_and_client_defaults() {
+    let target = TargetLayout::default();
+    assert_eq!(target.resolved_origin(1000, 800, &[]), [0.7, 0.02]);
+    let mut selected = WindowState {
+        key: "bytes:selecteditemview".into(),
+        rect: Some(crate::window_layout::WindowRect {
+            x: 100,
+            y: 80,
+            width: 200,
+            height: 200,
+            screen_width: 1000,
+            screen_height: 800,
+        }),
+        open: true,
+        locked: false,
+        minimized: false,
+        compact: None,
+        light_background: None,
+        stack: None,
+    };
+    assert_eq!(
+        target.resolved_origin(1000, 800, &[selected.clone()]),
+        [0.285, 0.1]
+    );
+    selected.rect.as_mut().unwrap().x = 800;
+    assert_eq!(target.resolved_origin(1000, 800, &[selected]), [0.785, 0.1]);
+    assert!(default_states(false).contains(&11));
+    assert!(default_states(true).contains(&51));
+    assert!(default_blink(false, 51));
 }

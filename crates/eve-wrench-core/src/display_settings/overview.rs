@@ -1,6 +1,20 @@
 use super::{SettingsDocument, boolean, integer, text};
 use serde_json::{Value, json};
-use std::collections::HashSet;
+
+pub fn group_catalog() -> &'static [(i64, String)] {
+    static GROUPS: std::sync::OnceLock<Vec<(i64, String)>> = std::sync::OnceLock::new();
+    GROUPS.get_or_init(|| {
+        let data: std::collections::BTreeMap<String, String> =
+            serde_json::from_str(include_str!("../../../../assets/overview-groups.json"))
+                .expect("bundled group IDs");
+        let mut groups: Vec<_> = data
+            .into_iter()
+            .filter_map(|(id, name)| Some((id.parse().ok()?, name)))
+            .collect();
+        groups.sort_by(|a, b| a.1.cmp(&b.1));
+        groups
+    })
+}
 
 pub const COLUMNS: &[(&str, &str, i64)] = &[
     ("ICON", "Icon", 28),
@@ -19,6 +33,22 @@ pub const COLUMNS: &[(&str, &str, i64)] = &[
     ("ANGULARVELOCITY", "Angular velocity", 100),
 ];
 pub const DEFAULT_COLUMNS: &[&str] = &["ICON", "DISTANCE", "NAME", "TYPE", "VELOCITY"];
+pub fn default_states(background: bool) -> &'static [i64] {
+    if background {
+        &[51, 50, 9, 11, 12, 66, 14, 13, 44, 45, 52]
+    } else {
+        &[
+            11, 12, 66, 14, 13, 45, 44, 15, 16, 18, 19, 51, 50, 68, 9, 21, 17, 49, 52, 10, 53,
+        ]
+    }
+}
+pub fn default_blink(background: bool, state: i64) -> bool {
+    if background {
+        [13, 44].contains(&state)
+    } else {
+        [50, 51, 52, 68].contains(&state)
+    }
+}
 pub const STATES: &[(i64, &str)] = &[
     (11, "Same fleet"),
     (12, "Same player corporation"),
@@ -211,11 +241,9 @@ fn string_list(value: &Value) -> bool {
         .is_some_and(|a| a.len() <= 100 && a.iter().all(|v| text(v).is_some()))
 }
 fn id_list(value: &Value) -> bool {
-    value.as_array().is_some_and(|a| {
-        a.len() <= 10000
-            && a.iter().all(|v| integer(v).is_some_and(|n| n >= 0))
-            && ids(Some(value)).into_iter().collect::<HashSet<_>>().len() == a.len()
-    })
+    value
+        .as_array()
+        .is_some_and(|a| a.len() <= 10000 && a.iter().all(|v| integer(v).is_some_and(|n| n >= 0)))
 }
 fn color(value: &Value, len: usize) -> bool {
     value
@@ -242,9 +270,10 @@ pub(super) fn validate_setting(key: &str, value: &Value) -> bool {
                             fields
                                 .iter()
                                 .all(|(k, v)| match text(&json!(k)).unwrap_or(k) {
-                                    "name" => text(v).is_some_and(|s| {
-                                        !s.trim().is_empty() && s.chars().count() <= 15
-                                    }),
+                                    "name" => {
+                                        v.is_null()
+                                            || text(v).is_some_and(|s| s.chars().count() <= 15)
+                                    }
                                     "overview" | "bracket" => {
                                         text(v).is_some() || v.is_null() || v.get("tuple").is_some()
                                     }

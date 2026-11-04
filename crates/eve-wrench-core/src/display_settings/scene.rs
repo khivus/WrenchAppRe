@@ -104,6 +104,32 @@ impl TargetLayout {
                 .unwrap_or(true),
         }
     }
+    pub fn resolved_origin(&self, width: i64, height: i64, windows: &[WindowState]) -> [f64; 2] {
+        self.origin.unwrap_or_else(|| {
+            let fallback = [
+                (width - 300).max(0) as f64 / width as f64,
+                16.0 / height as f64,
+            ];
+            let Some(r) = windows
+                .iter()
+                .find(|w| w.id() == "selecteditemview")
+                .and_then(|w| w.rect)
+            else {
+                return fallback;
+            };
+            let left = r.x - 15;
+            if left + r.width < width / 2 {
+                [
+                    (left + r.width) as f64 / width as f64,
+                    r.y as f64 / height as f64,
+                ]
+            } else if left > width / 2 {
+                [left as f64 / width as f64, r.y as f64 / height as f64]
+            } else {
+                fallback
+            }
+        })
+    }
     pub fn rectangles(
         &self,
         width: i64,
@@ -111,14 +137,7 @@ impl TargetLayout {
         count: usize,
         windows: &[WindowState],
     ) -> Vec<WindowRect> {
-        let origin = self.origin.unwrap_or_else(|| {
-            windows
-                .iter()
-                .find(|w| w.id() == "selecteditemview")
-                .and_then(|w| w.rect)
-                .map(|r| [(r.x - 15) as f64 / width as f64, r.y as f64 / height as f64])
-                .unwrap_or([0.8, 16.0 / height as f64])
-        });
+        let origin = self.resolved_origin(width, height, windows);
         let left = origin[0] > 0.5;
         let up = origin[1] > 0.5;
         let (tw, th) = if self.horizontal {

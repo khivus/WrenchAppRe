@@ -62,36 +62,6 @@ impl Desktop {
     }
 }
 
-// Windows that only exist while docked.
-const DOCKED_ONLY: [&str; 6] = [
-    "lobbyWnd",
-    "repairshop",
-    "tradeWnd",
-    "InventoryStructure",
-    "StationItems",
-    "StationShips",
-];
-
-// Windows from the client's inflight UI, which only show in space.
-const SPACE_ONLY: [&str; 6] = [
-    "droneview",
-    "selecteditemview",
-    "probeScannerWindow",
-    "directionalScannerWindow",
-    "MoonScanner",
-    "InventorySpace",
-];
-
-pub fn docked_only(window: &WindowState) -> bool {
-    let id = window.id();
-    DOCKED_ONLY.contains(&id) || id.starts_with("InventoryStation")
-}
-
-pub fn space_only(window: &WindowState) -> bool {
-    let id = window.id();
-    SPACE_ONLY.contains(&id) || id == "overview" || id.starts_with("overview_")
-}
-
 pub fn members<'a>(windows: &'a [WindowState], stack: &str) -> Vec<&'a WindowState> {
     windows
         .iter()
@@ -153,7 +123,7 @@ pub fn category(window: &WindowState) -> Category {
     if id.starts_with("overview") {
         return Category::Space;
     }
-    if id.starts_with("Inventory") || id.starts_with("Station") {
+    if inventory_id(id) {
         return Category::Inventory;
     }
     match id {
@@ -187,7 +157,7 @@ pub fn icon(window: &WindowState) -> IconName {
     if id.starts_with("overview") {
         return IconName::ListFilter;
     }
-    if id.starts_with("Inventory") || id.starts_with("Station") {
+    if inventory_id(id) {
         return IconName::Warehouse;
     }
     match id {
@@ -218,6 +188,14 @@ pub fn icon(window: &WindowState) -> IconName {
         "fpsMonitor2" => IconName::Gauge,
         _ => IconName::AppWindow,
     }
+}
+
+fn inventory_id(id: &str) -> bool {
+    id.starts_with("Inventory")
+        || id.starts_with("Station")
+        || id.starts_with("StructureItemHangar")
+        || id.starts_with("StructureShipHangar")
+        || id.starts_with("StructureCorpHangar")
 }
 
 // Window ids with a translated name; the rest are spelled out from the id.
@@ -586,16 +564,6 @@ mod tests {
         windows[0].rect.as_mut().unwrap().screen_width = 1920;
         assert_eq!(screen(&windows), SCREEN);
         assert_eq!(screen(&[]), FALLBACK_SCREEN);
-    }
-
-    #[test]
-    fn splits_windows_by_location() {
-        let space = window("bytes:overview_3", None);
-        let docked = window("bytes:lobbyWnd", None);
-        let both = window("bytes:overviewsettings", None);
-        assert!(space_only(&space) && !docked_only(&space));
-        assert!(docked_only(&docked) && !space_only(&docked));
-        assert!(!space_only(&both) && !docked_only(&both));
     }
 
     #[test]

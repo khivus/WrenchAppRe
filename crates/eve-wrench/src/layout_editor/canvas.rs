@@ -1,6 +1,7 @@
 use eve_wrench_core::window_layout::{NeocomSide, WindowRect, WindowState};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, Selectable as _, Sizable as _, h_flex,
 };
@@ -9,7 +10,7 @@ use gpui_kit::*;
 use rust_i18n::t;
 
 use super::model::{self, Desktop, Edges, Screen, SnapLines, Snapshot};
-use super::{LayoutEditor, Location};
+use super::{LayoutEditor, Scene};
 use crate::ui;
 
 // Room around the screen inside the canvas
@@ -64,8 +65,8 @@ pub(super) struct Pan {
 // Screen pixels to canvas pixels: the screen is scaled to fit and centered,
 // then zoomed and panned.
 #[derive(Clone, Copy)]
-struct Mapping {
-    scale: f32,
+pub(super) struct Mapping {
+    pub(super) scale: f32,
     // Top left of the screen, relative to the canvas
     offset: Point<Pixels>,
 }
@@ -92,7 +93,7 @@ impl Mapping {
         )
     }
 
-    fn rect(self, r: &WindowRect) -> Bounds<Pixels> {
+    pub(super) fn rect(self, r: &WindowRect) -> Bounds<Pixels> {
         Bounds::new(
             point(
                 self.offset.x + px(r.x as f32 * self.scale),
@@ -154,19 +155,16 @@ impl LayoutEditor {
         cx.notify();
     }
 
-    pub(super) fn desktop(&self) -> Desktop {
+    pub(super) fn desktop(&self, cx: &App) -> Desktop {
         Desktop {
             screen: model::screen(&self.windows),
-            neocom: self.neocom,
+            neocom: self.settings.read(cx).neocom(self.neocom),
         }
     }
 
     // Station-only windows are left out in space, inflight ones when docked.
     pub(super) fn in_location(&self, window: &WindowState) -> bool {
-        let allowed = |window: &WindowState| match self.location {
-            Location::InSpace => !model::docked_only(window),
-            Location::Docked => !model::space_only(window),
-        };
+        let allowed = |window: &WindowState| self.scene.allows(window);
         if window.is_stack() {
             return model::members(&self.windows, &window.key)
                 .into_iter()
@@ -217,7 +215,7 @@ impl LayoutEditor {
             return;
         };
         let mapping = self.mapping();
-        let desktop = self.desktop();
+        let desktop = self.desktop(cx);
         let delta = mapping.screen_delta(event.position - drag.origin);
         let lines = self.snap.then(|| {
             SnapLines::new(
@@ -285,6 +283,14 @@ impl LayoutEditor {
     }
 
     pub(super) fn preview_name(&self, window: &WindowState) -> String {
+        if window.id() == "lobbyWnd" {
+            return t!(if self.scene == Scene::Citadel {
+                "display.citadelServices"
+            } else {
+                "display.stationServices"
+            })
+            .to_string();
+        }
         if !self.show_all_windows && window.is_stack() {
             let names: Vec<_> = self
                 .preview_members(&window.key)
@@ -401,6 +407,12 @@ impl LayoutEditor {
                     })
                     .child(div().min_w_0().truncate().child(name)),
             )
+            .when(!collapsed, |this| {
+                this.when_some(
+                    self.render_overview_contents(state, mapping, cx),
+                    |this, content| this.child(content),
+                )
+            })
             .when((selected || hovered) && !collapsed, |this| {
                 this.child(
                     div()
@@ -549,35 +561,34 @@ impl LayoutEditor {
             )
             .child(div().w(px(1.)).h_4().mx_1().bg(chrome_border))
             .child(
-                ui::segmented(
-                    "location",
-                    [
-                        t!("layoutEditor.inSpace").to_string(),
-                        t!("layoutEditor.docked").to_string(),
-                    ],
-                    Some(match self.location {
-                        Location::InSpace => 0,
-                        Location::Docked => 1,
-                    }),
-                    {
-                        let editor = cx.entity().downgrade();
-                        move |i, _, cx| {
-                            editor
-                                .update(cx, |this, cx| {
-                                    this.location = if i == 0 {
-                                        Location::InSpace
-                                    } else {
-                                        Location::Docked
-                                    };
-                                    cx.notify();
-                                })
-                                .ok();
+                Button::new("layout-scene")
+                    .outline()
+                    .xsmall()
+                    .label(t!(format!("display.scenes.{}", self.scene.id())).to_string())
+                    .dropdown_menu({
+                        let view = cx.entity().downgrade();
+                        let selected = self.scene;
+                        move |menu, _, _| {
+                            Scene::ALL.into_iter().fold(menu, |menu, scene| {
+                                let view = view.clone();
+                                menu.item(
+                                    PopupMenuItem::new(
+                                        t!(format!("display.scenes.{}", scene.id())).to_string(),
+                                    )
+                                    .checked(scene == selected)
+                                    .on_click(
+                                        move |_, _, cx| {
+                                            view.update(cx, |this, cx| {
+                                                this.scene = scene;
+                                                cx.notify();
+                                            })
+                                            .ok();
+                                        },
+                                    ),
+                                )
+                            })
                         }
-                    },
-                    cx,
-                )
-                .flex_none()
-                .w(px(150.)),
+                    }),
             )
             .child(div().w(px(1.)).h_4().mx_1().bg(chrome_border))
             .child(
@@ -608,6 +619,42 @@ impl LayoutEditor {
                     .toggled(!self.show_all_windows)
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.show_all_windows = !this.show_all_windows;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("layout-targets")
+                    .ghost()
+                    .xsmall()
+                    .label(t!("display.lockedTargets").to_string())
+                    .selected(self.show_targets)
+                    .toggled(self.show_targets)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.show_targets = !this.show_targets;
+                        if this.show_targets
+                            && this
+                                .settings
+                                .read(cx)
+                                .doc(eve_wrench_core::SettingsKind::User)
+                                .is_none()
+                        {
+                            this.settings_open = true;
+                            this.settings.update(cx, |settings, cx| {
+                                settings.open_page(super::settings::Page::Targets, cx)
+                            });
+                        }
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("layout-settings")
+                    .ghost()
+                    .xsmall()
+                    .label(t!("display.settings").to_string())
+                    .selected(self.settings_open)
+                    .toggled(self.settings_open)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings_open = !this.settings_open;
                         cx.notify();
                     })),
             )
@@ -671,11 +718,12 @@ impl LayoutEditor {
             screen_height: screen.height,
         };
         let screen_bounds = mapping.rect(&full(0, screen.width));
-        let neocom_x = match self.neocom.side {
+        let neocom = self.settings.read(cx).neocom(self.neocom);
+        let neocom_x = match neocom.side {
             NeocomSide::Left => 0,
-            NeocomSide::Right => screen.width - self.neocom.width,
+            NeocomSide::Right => screen.width - neocom.width,
         };
-        let neocom_bounds = mapping.rect(&full(neocom_x, self.neocom.width));
+        let neocom_bounds = mapping.rect(&full(neocom_x, neocom.width));
         let neocom_bg = theme.muted.opacity(0.9);
 
         // Closed windows underneath, the selected one on top
@@ -756,6 +804,7 @@ impl LayoutEditor {
                     .bg(neocom_bg),
             )
             .children(elements)
+            .children(self.render_scene_overlays(mapping, cx))
             .child(
                 h_flex()
                     .absolute()

@@ -3,12 +3,15 @@ mod inspector;
 mod model;
 #[cfg(test)]
 mod preview_tests;
+mod scene_preview;
+mod settings;
 
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use eve_wrench_core::display_settings::scene::Scene;
 use eve_wrench_core::window_layout::{
     self, Neocom, WindowActivity, WindowLayout, WindowRect, WindowState,
 };
@@ -51,14 +54,6 @@ enum LoadState {
     Loading,
     Failed(SharedString),
     Ready,
-}
-
-// The client uses one layout for both, but shows some windows only docked
-// and some only in space.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Location {
-    InSpace,
-    Docked,
 }
 
 // Rects where the client shows them, which is what the editor works on.
@@ -144,7 +139,11 @@ pub struct LayoutEditor {
     // Local preview visibility; never included in saved layouts or undo history.
     preview_hidden: HashSet<String>,
     search: Entity<InputState>,
-    location: Location,
+    scene: Scene,
+    settings: Entity<settings::DisplayEditor>,
+    settings_open: bool,
+    settings_pending: bool,
+    show_targets: bool,
     rect_inputs: [Entity<InputState>; 4],
     _subscriptions: Vec<Subscription>,
 }
@@ -188,6 +187,11 @@ impl LayoutEditor {
             }
         }));
 
+        let settings = cx.new(|cx| settings::DisplayEditor::new(file_path.clone(), window, cx));
+        subscriptions.push(cx.observe(&settings, |this, settings, cx| {
+            this.settings_pending = settings.read(cx).pending();
+            cx.notify();
+        }));
         let mut editor = Self {
             store,
             file_path,
@@ -214,7 +218,11 @@ impl LayoutEditor {
             show_all_windows: false,
             preview_hidden: HashSet::new(),
             search,
-            location: Location::InSpace,
+            scene: Scene::Space,
+            settings,
+            settings_open: false,
+            settings_pending: false,
+            show_targets: false,
             rect_inputs,
             _subscriptions: subscriptions,
         };
@@ -227,7 +235,7 @@ impl LayoutEditor {
     }
 
     pub fn has_pending_edits(&self) -> bool {
-        self.is_dirty() || self.saving
+        self.is_dirty() || self.saving || self.settings_pending
     }
 
     fn snapshot(&self) -> Snapshot {
@@ -598,6 +606,19 @@ impl LayoutEditor {
 
 impl Render for LayoutEditor {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let dirty = self.is_dirty() || self.saving;
+        let screen = model::screen(&self.windows);
+        let dims = (screen.width, screen.height);
+        let origin = eve_wrench_core::display_settings::scene::TargetLayout::default()
+            .resolved_origin(screen.width, screen.height, &self.windows);
+        if self.settings.read(cx).layout_dirty != dirty
+            || self.settings.read(cx).screen != dims
+            || self.settings.read(cx).default_target_origin != origin
+        {
+            self.settings.update(cx, |settings, cx| {
+                settings.geometry_context(dims, origin, dirty, cx);
+            });
+        }
         let body = match &self.state {
             LoadState::Loading => div()
                 .flex()
@@ -644,7 +665,11 @@ impl Render for LayoutEditor {
                         .items_stretch()
                         .child(self.render_list(cx))
                         .child(self.render_canvas(cx))
-                        .child(self.render_inspector(cx)),
+                        .child(if self.settings_open {
+                            self.settings.clone().into_any_element()
+                        } else {
+                            self.render_inspector(cx).into_any_element()
+                        }),
                 )
                 .child(self.render_footer(cx))
                 .into_any_element(),
