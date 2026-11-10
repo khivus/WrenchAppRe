@@ -104,8 +104,6 @@ pub const COPY_GROUPS: &[CopyGroup] = &[
             "minEdit_market",
             "maxEdit_market",
             "quickbar",
-            "contracts_search_",
-            "mycontracts_",
             "pricehistorytype",
         ]),
     },
@@ -314,6 +312,13 @@ fn copy_settings_impl(
         if prepared.is_err() {
             continue;
         }
+        // EVE caches the My Contracts character/corporation selector in both
+        // account and character DATs. It is identity state, not a portable
+        // preference. Drop it on full sync (including previously contaminated
+        // destinations) so EVE resolves the logged-in character again.
+        if !only_selected {
+            remove_contract_owner(&mut result);
+        }
         if only_selected
             && drone_mode.is_none()
             && groups.contains(&"drone_groups")
@@ -338,10 +343,81 @@ fn copy_settings_impl(
     Ok(success_count)
 }
 
+fn remove_contract_owner(root: &mut Value) {
+    if let Some(root) = root.as_object_mut() {
+        let ui = find_section_key(root, "ui");
+        if let Some(ui) = root.get_mut(&ui).and_then(Value::as_object_mut) {
+            ui.retain(|key, _| strip_type_prefix(key) != "mycontracts_filter_owner");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn contract_owner_is_reset_without_removing_other_contract_preferences() {
+        let mut root = json!({"bytes:ui": {
+            "bytes:mycontracts_filter_owner": {"tuple": ["long:123", "utf8:Other pilot"]},
+            "utf8:mycontracts_filter_owner": [42, "utf8:Other corp"],
+            "bytes:mycontracts_filter_status": 2,
+            "bytes:contracts_search_type": 1
+        }});
+        remove_contract_owner(&mut root);
+        assert_eq!(
+            root,
+            json!({"bytes:ui": {
+                "bytes:mycontracts_filter_status": 2,
+                "bytes:contracts_search_type": 1
+            }})
+        );
+        let market = find_group("market").unwrap();
+        let GroupRule::UiPrefixes(prefixes) = market.rule else {
+            panic!()
+        };
+        assert!(!key_matches("bytes:mycontracts_filter_owner", prefixes));
+        assert!(!key_matches("bytes:contracts_search_issuer", prefixes));
+    }
+
+    #[test]
+    fn full_sync_removes_contract_owner_from_user_and_character_dats() {
+        let dir = std::env::temp_dir().join(format!(
+            "wrench-contract-sync-{}-{}",
+            std::process::id(),
+            crate::marshal::filetime_now()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for kind in ["user", "char"] {
+            let source = dir.join(format!("core_{kind}_1.dat"));
+            let target = dir.join(format!("core_{kind}_2.dat"));
+            let root = json!({"bytes:ui": {
+                "bytes:mycontracts_filter_owner": {"tuple": ["long:0", "utf8:Wrong owner"]},
+                "bytes:other": {"tuple": ["long:0", 7]}
+            }});
+            std::fs::write(&source, encode_settings_json(&root, true).unwrap()).unwrap();
+            std::fs::write(&target, encode_settings_json(&root, false).unwrap()).unwrap();
+            let targets = [target.to_string_lossy().into_owned()];
+            assert_eq!(
+                copy_settings_selective(&source, &targets, &[], true).unwrap(),
+                1
+            );
+            let (result, crc) = load_settings_json(&target).unwrap();
+            assert!(!crc);
+            assert!(
+                result["bytes:ui"]
+                    .get("bytes:mycontracts_filter_owner")
+                    .is_none()
+            );
+            assert_eq!(
+                result["bytes:ui"]["bytes:other"],
+                root["bytes:ui"]["bytes:other"]
+            );
+            assert_eq!(load_settings_json(&source).unwrap().0, root);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn drone_sync_modes_apply_to_every_account_and_back_up_originals() {
