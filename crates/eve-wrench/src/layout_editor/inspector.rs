@@ -234,12 +234,58 @@ impl LayoutEditor {
                                 )),
                             ),
                     )
-                    .children(list.into_iter().map(|w| self.render_list_row(w, cx))),
+                    .children(list.into_iter().map(|w| {
+                        let instance = if w.id() == "overview" {
+                            Some(0)
+                        } else {
+                            w.id()
+                                .strip_prefix("overview_")
+                                .and_then(|id| id.parse().ok())
+                        };
+                        let tabs = instance
+                            .and_then(|instance| {
+                                self.preview_settings
+                                    .doc(eve_wrench_core::SettingsKind::User)
+                                    .map(|doc| {
+                                        eve_wrench_core::display_settings::overview::assigned_tabs(
+                                            doc, instance,
+                                        )
+                                    })
+                            })
+                            .unwrap_or_default();
+                        v_flex()
+                            .child(self.render_list_row(w, cx))
+                            .children(tabs.into_iter().map(|tab| {
+                                let key = w.key.clone();
+                                Button::new(SharedString::from(format!(
+                                    "sidebar-tab-{}-{}",
+                                    w.key, tab.id
+                                )))
+                                .ghost()
+                                .xsmall()
+                                .ml_4()
+                                .label(tab.name)
+                                .on_click(cx.listener(
+                                    move |this, _, window, cx| {
+                                        this.select(Some(key.clone()), window, cx);
+                                        this.preview_overview_tabs.insert(key.clone(), tab.id);
+                                        this.settings.update(cx, |settings, cx| {
+                                            settings.select_overview_tab(tab.key.clone(), cx)
+                                        });
+                                        this.settings_open = true;
+                                        cx.notify();
+                                    },
+                                ))
+                            }))
+                    })),
             );
         }
 
         v_flex()
-            .w(px(240.))
+            .id("layout-sidebar")
+            .test_support()
+            .w_full()
+            .h_full()
             .flex_none()
             .min_h_0()
             .border_r_1()
@@ -249,6 +295,24 @@ impl LayoutEditor {
                     .flex_none()
                     .p_2()
                     .gap_2()
+                    .child(
+                        Button::new("visible-windows-only")
+                            .ghost()
+                            .xsmall()
+                            .icon(if !self.show_all_windows {
+                                IconName::Eye
+                            } else {
+                                IconName::EyeOff
+                            })
+                            .label(t!("layoutEditor.visibleWindowsOnly").to_string())
+                            .tooltip(t!("layoutEditor.visibleWindowsOnlyHint").to_string())
+                            .selected(!self.show_all_windows)
+                            .toggled(!self.show_all_windows)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_all_windows = !this.show_all_windows;
+                                cx.notify();
+                            })),
+                    )
                     .child(
                         Input::new(&self.search)
                             .id("layout-search")
@@ -329,7 +393,135 @@ impl LayoutEditor {
                                         ),
                                 )
                             })
-                            .children(sections),
+                            .children(
+                                [
+                                    (super::settings::Page::Neocom, "sidebar-neocom", "Neocom"),
+                                    (
+                                        super::settings::Page::Targets,
+                                        "sidebar-targets",
+                                        "Locked targets",
+                                    ),
+                                    (
+                                        super::settings::Page::Fighters,
+                                        "sidebar-fighters",
+                                        "Fighters",
+                                    ),
+                                    (
+                                        super::settings::Page::Overview,
+                                        "sidebar-overview",
+                                        "Overview settings",
+                                    ),
+                                ]
+                                .into_iter()
+                                .map(|(page, id, label)| {
+                                    Button::new(id)
+                                        .ghost()
+                                        .small()
+                                        .w_full()
+                                        .label(label)
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.open_settings(page, cx)
+                                        }))
+                                }),
+                            )
+                            .children(sections)
+                            .child(
+                                Button::new("sidebar-overview-filters")
+                                    .ghost()
+                                    .small()
+                                    .w_full()
+                                    .label(if self.overview_filters_open {
+                                        "▾ Overview filters"
+                                    } else {
+                                        "▸ Overview filters"
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.overview_filters_open = !this.overview_filters_open;
+                                        cx.notify();
+                                    })),
+                            )
+                            .when(self.overview_filters_open, |list| {
+                                let presets = self
+                                    .preview_settings
+                                    .doc(eve_wrench_core::SettingsKind::User)
+                                    .and_then(|doc| doc.value("overview", "overviewProfilePresets"))
+                                    .and_then(serde_json::Value::as_object);
+                                list.children(
+                                    presets
+                                        .into_iter()
+                                        .flatten()
+                                        .filter(|(key, _)| key.to_lowercase().contains(&query))
+                                        .map(|(key, value)| {
+                                            let key = key.clone();
+                                            let name = key
+                                                .strip_prefix("utf8:")
+                                                .or_else(|| key.strip_prefix("bytes:"))
+                                                .unwrap_or(&key)
+                                                .to_owned();
+                                            let count = value
+                                                .get("bytes:groups")
+                                                .and_then(serde_json::Value::as_array)
+                                                .map_or(0, Vec::len);
+                                            Button::new(SharedString::from(format!(
+                                                "sidebar-preset-{key}"
+                                            )))
+                                            .ghost()
+                                            .xsmall()
+                                            .ml_3()
+                                            .label(format!("{name} ({count})"))
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.settings_open = true;
+                                                this.settings.update(cx, |settings, cx| {
+                                                    settings.select_preset(key.clone(), cx)
+                                                });
+                                                cx.notify();
+                                            }))
+                                        }),
+                                )
+                            })
+                            .child(
+                                Button::new("sidebar-overview-records")
+                                    .ghost()
+                                    .small()
+                                    .w_full()
+                                    .label(if self.overview_records_open {
+                                        "▾ Saved overview values"
+                                    } else {
+                                        "▸ Saved overview values"
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.overview_records_open = !this.overview_records_open;
+                                        cx.notify();
+                                    })),
+                            )
+                            .when(self.overview_records_open, |list| {
+                                let records = self
+                                    .preview_settings
+                                    .doc(eve_wrench_core::SettingsKind::User)
+                                    .map(|doc| doc.overview_records())
+                                    .unwrap_or_default();
+                                list.children(
+                                    records
+                                        .into_iter()
+                                        .filter(|key| key.to_lowercase().contains(&query))
+                                        .map(|key| {
+                                            Button::new(SharedString::from(format!(
+                                                "sidebar-record-{key}"
+                                            )))
+                                            .ghost()
+                                            .xsmall()
+                                            .ml_3()
+                                            .label(key.clone())
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.settings_open = true;
+                                                this.settings.update(cx, |settings, cx| {
+                                                    settings.select_record(key.clone(), cx)
+                                                });
+                                                cx.notify();
+                                            }))
+                                        }),
+                                )
+                            }),
                         |this| &mut this.list_scroll,
                         cx,
                     )
@@ -571,8 +763,8 @@ impl LayoutEditor {
                 |this| &mut this.inspector_scroll,
                 cx,
             )
-            .w(px(280.))
-            .flex_none()
+            .w_full()
+            .flex_1()
             .border_l_1()
             .border_color(border)
     }

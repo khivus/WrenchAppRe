@@ -60,7 +60,16 @@ impl DisplayEditor {
             .or_else(|| tabs.first())
             .cloned()
         else {
-            return hint("display.noOverviewTabs", cx);
+            return match self.overview_section {
+                1 => self.render_filters(None, cx),
+                2 => self.render_appearance(cx),
+                3 => self.render_overview_options(cx),
+                _ => v_flex()
+                    .gap_3()
+                    .child(hint("display.noOverviewTabs", cx))
+                    .child(self.render_overview_options(cx))
+                    .into_any_element(),
+            };
         };
         let choices = tabs
             .iter()
@@ -83,15 +92,16 @@ impl DisplayEditor {
         );
         let section = match self.overview_section {
             0 => self.render_tab_columns(&tab, window, cx),
-            1 => self.render_filters(&tab, cx),
-            _ => self.render_appearance(cx),
+            1 => self.render_filters(Some(&tab), cx),
+            2 => self.render_appearance(cx),
+            _ => self.render_overview_options(cx),
         };
         v_flex()
             .gap_3()
             .child(picker)
             .child(
                 h_flex().gap_1().children(
-                    ["tabsColumns", "filters", "colors"]
+                    ["tabsColumns", "filters", "colors", "options"]
                         .into_iter()
                         .enumerate()
                         .map(|(index, key)| {
@@ -485,7 +495,7 @@ impl DisplayEditor {
     }
     fn render_filters(
         &mut self,
-        tab: &overview::OverviewTab,
+        tab: Option<&overview::OverviewTab>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let presets = self.preset_options();
@@ -493,7 +503,8 @@ impl DisplayEditor {
             .selected_preset
             .as_ref()
             .and_then(|key| presets.iter().find(|(k, _)| k == key))
-            .or_else(|| presets.iter().find(|(_, name)| name == &tab.preset))
+            .or_else(|| tab.and_then(|tab| presets.iter().find(|(_, name)| name == &tab.preset)))
+            .or_else(|| presets.first())
             .cloned();
         let selected = chosen.as_ref().map(|(k, _)| k.clone()).unwrap_or_default();
         let picker = self.picker(

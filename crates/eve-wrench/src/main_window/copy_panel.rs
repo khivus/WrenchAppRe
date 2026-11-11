@@ -51,7 +51,8 @@ impl MainView {
         let source_kinds: Vec<_> = sources.iter().map(Source::kind).collect();
 
         v_flex()
-            .w(px(300.))
+            .w_full()
+            .h_full()
             .flex_none()
             .border_l_1()
             .border_color(cx.theme().border)

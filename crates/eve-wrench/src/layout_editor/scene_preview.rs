@@ -8,7 +8,11 @@ use gpui_kit::{
 use rust_i18n::t;
 
 impl LayoutEditor {
-    pub(super) fn render_scene_overlays(&self, mapping: Mapping, cx: &App) -> Vec<AnyElement> {
+    pub(super) fn render_scene_overlays(
+        &self,
+        mapping: Mapping,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         let screen = model::screen(&self.windows);
         let settings = &self.preview_settings;
         let mut elements = Vec::new();
@@ -39,6 +43,10 @@ impl LayoutEditor {
                     v_flex()
                         .id(SharedString::from(format!("preview-target-{i}")))
                         .test_support()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.open_settings(super::settings::Page::Targets, cx)
+                        }))
                         .absolute()
                         .left(bounds.origin.x)
                         .top(bounds.origin.y)
@@ -50,17 +58,27 @@ impl LayoutEditor {
                         .border_1()
                         .border_color(color.opacity(0.7))
                         .bg(cx.theme().background.opacity(0.8))
-                        .child(div().text_size(px(14.)).text_color(color).child("◎"))
-                        .child(div().text_size(px(8.)).text_color(muted).child(format!(
-                            "{} {}",
-                            t!("display.targetSample"),
-                            i + 1
-                        )))
+                        .child(
+                            div()
+                                .text_size(px(14. * mapping.scale))
+                                .text_color(color)
+                                .child("◎"),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11. * mapping.scale))
+                                .text_color(muted)
+                                .child(format!("{} {}", t!("display.targetSample"), i + 1)),
+                        )
                         .into_any_element(),
                 );
             }
         }
-        let count = self.scene.fighter_count();
+        let count = if self.scene.docked() {
+            0
+        } else {
+            self.fighter_count
+        };
         if count > 0
             && let Some(doc) = settings.doc(SettingsKind::Char)
         {
@@ -70,6 +88,10 @@ impl LayoutEditor {
                 v_flex()
                     .id("preview-fighters")
                     .test_support()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.open_settings(super::settings::Page::Fighters, cx)
+                    }))
                     .absolute()
                     .left(bounds.origin.x)
                     .top(bounds.origin.y)
@@ -81,8 +103,8 @@ impl LayoutEditor {
                     .bg(cx.theme().background.opacity(0.85))
                     .child(
                         div()
-                            .text_size(px(8.))
-                            .child(t!(format!("display.scenes.{}", self.scene.id())).to_string()),
+                            .text_size(px(11. * mapping.scale))
+                            .child(format!("{} ({count})", t!("display.pages.fighters"))),
                     )
                     .child(
                         h_flex()
@@ -92,7 +114,7 @@ impl LayoutEditor {
                             .child(
                                 div()
                                     .w(px(36. * mapping.scale))
-                                    .text_size(px(8.))
+                                    .text_size(px(11. * mapping.scale))
                                     .child("≡"),
                             )
                             .children((0..count).map(|i| {
@@ -106,8 +128,17 @@ impl LayoutEditor {
                                     .border_1()
                                     .border_color(color.opacity(0.5))
                                     .gap_1()
-                                    .child(div().text_size(px(10.)).child(format!("◇ {}", i + 1)))
-                                    .child(div().text_size(px(8.)).text_color(muted).child("▣ ▣ ▣"))
+                                    .child(
+                                        div()
+                                            .text_size(px(12. * mapping.scale))
+                                            .child(format!("◇ {}", i + 1)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11. * mapping.scale))
+                                            .text_color(muted)
+                                            .child("▣ ▣ ▣"),
+                                    )
                             })),
                     )
                     .into_any_element(),
@@ -147,6 +178,10 @@ impl LayoutEditor {
                     div()
                         .id(SharedString::from(format!("preview-neocom-{i}")))
                         .test_support()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.open_settings(super::settings::Page::Neocom, cx)
+                        }))
                         .absolute()
                         .left(bounds.origin.x)
                         .top(bounds.origin.y)
@@ -158,13 +193,9 @@ impl LayoutEditor {
                         .justify_center()
                         .border_b_1()
                         .border_color(cx.theme().border)
-                        .text_size(px(
-                            (neocom.width as f32 * mapping.scale * 0.3).clamp(6., 12.)
-                        ))
+                        .text_size(px(neocom.width as f32 * mapping.scale * 0.3))
                         .text_color(muted)
-                        .child(Icon::new(icon).size(px(
-                            (neocom.width as f32 * mapping.scale * 0.55).clamp(5., 18.),
-                        )))
+                        .child(Icon::new(icon).size(px(neocom.width as f32 * mapping.scale * 0.55)))
                         .into_any_element(),
                 );
             }

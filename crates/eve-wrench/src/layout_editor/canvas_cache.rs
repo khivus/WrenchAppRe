@@ -36,6 +36,7 @@ pub(super) struct CanvasStamp {
     snap: bool,
     show_all: bool,
     targets: bool,
+    fighters: usize,
     settings_open: bool,
     settings_revision: u64,
 }
@@ -57,6 +58,7 @@ impl LayoutEditor {
             snap: self.snap,
             show_all: self.show_all_windows,
             targets: self.show_targets,
+            fighters: self.fighter_count,
             settings_open: self.settings_open,
             settings_revision: self.settings_revision,
         };

@@ -102,6 +102,8 @@ fn bulk_visibility_and_search_are_scoped_reversible_and_preview_only(cx: &mut Te
             window.find(format!("list-bytes:{id}"));
         }
         window.find("window-bytes:market");
+        window.click("layout-window-properties", cx);
+        window.render_frame(cx);
         assert_eq!(window.find("flag-preview-hidden").checked(), Some(true));
         assert_eq!(editor.read(cx).selected.as_deref(), Some("bytes:overview"));
         // A mixed category first hides its remaining previews, then shows all.

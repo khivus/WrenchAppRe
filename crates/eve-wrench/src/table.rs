@@ -33,6 +33,10 @@ impl Column {
         }
     }
 
+    pub fn width(self) -> Option<Pixels> {
+        self.width
+    }
+
     pub const fn end(mut self) -> Self {
         self.align = Align::End;
         self

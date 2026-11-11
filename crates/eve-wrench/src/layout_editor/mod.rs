@@ -20,7 +20,9 @@ use eve_wrench_core::window_layout::{
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Selectable as _, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use rust_i18n::t;
@@ -138,6 +140,8 @@ pub struct LayoutEditor {
     canvas_bounds: Rc<Cell<Bounds<Pixels>>>,
     snap: bool,
     show_all_windows: bool,
+    overview_records_open: bool,
+    overview_filters_open: bool,
     // Local preview visibility; never included in saved layouts or undo history.
     preview_hidden: HashSet<String>,
     search: Entity<InputState>,
@@ -150,6 +154,7 @@ pub struct LayoutEditor {
     canvas_preview: Option<Entity<canvas_cache::CanvasPreview>>,
     canvas_stamp: Option<canvas_cache::CanvasStamp>,
     show_targets: bool,
+    fighter_count: usize,
     preview_overview_tabs: std::collections::HashMap<String, i64>,
     preview_stack_tabs: std::collections::HashMap<String, String>,
     rect_inputs: [Entity<InputState>; 4],
@@ -231,6 +236,8 @@ impl LayoutEditor {
             canvas_bounds: Rc::new(Cell::new(Bounds::default())),
             snap: true,
             show_all_windows: false,
+            overview_records_open: false,
+            overview_filters_open: false,
             preview_hidden: HashSet::new(),
             search,
             scene: Scene::Space,
@@ -242,6 +249,7 @@ impl LayoutEditor {
             canvas_preview: None,
             canvas_stamp: None,
             show_targets: false,
+            fighter_count: 0,
             preview_overview_tabs: Default::default(),
             preview_stack_tabs: Default::default(),
             rect_inputs,
@@ -448,10 +456,30 @@ impl LayoutEditor {
     }
 
     fn select(&mut self, key: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        if key != self.selected {
+        if key != self.selected || key.is_some() {
             self.selected = key;
+            let id = self.selected_window().map(|w| w.id().to_owned());
+            self.settings_open = false;
+            if let Some(id) = id {
+                if id == "overview" || id.starts_with("overview_") {
+                    self.settings
+                        .update(cx, |settings, cx| settings.select_overview_window(&id, cx));
+                    self.settings_open = true;
+                } else if eve_wrench_core::display_settings::chat::channel(&id).is_some() {
+                    self.settings
+                        .update(cx, |settings, cx| settings.select_chat(&id, cx));
+                    self.settings_open = true;
+                }
+            }
             self.after_structural_change(window, cx);
         }
+    }
+
+    fn open_settings(&mut self, page: settings::Page, cx: &mut Context<Self>) {
+        self.settings_open = true;
+        self.settings
+            .update(cx, |settings, cx| settings.open_page(page, cx));
+        cx.notify();
     }
 
     fn restore(&mut self, snapshot: Snapshot, window: &mut Window, cx: &mut Context<Self>) {
@@ -710,17 +738,50 @@ impl Render for LayoutEditor {
                 .flex_1()
                 .min_h_0()
                 .child(
-                    h_flex()
-                        .flex_1()
-                        .min_h_0()
-                        .items_stretch()
-                        .child(self.render_list(cx))
-                        .child(self.cached_canvas(cx))
-                        .child(if self.settings_open {
-                            self.settings.clone().into_any_element()
-                        } else {
-                            self.render_inspector(cx).into_any_element()
-                        }),
+                    gpui_kit::component::resizable::h_resizable("layout-columns")
+                        .child(ui::pane(Some(240.), self.render_list(cx)))
+                        .child(ui::pane(None, self.cached_canvas(cx)))
+                        .child(ui::pane(
+                            Some(392.),
+                            v_flex()
+                                .size_full()
+                                .min_h_0()
+                                .child(
+                                    h_flex()
+                                        .flex_none()
+                                        .p_2()
+                                        .gap_2()
+                                        .child(
+                                            Button::new("layout-window-properties")
+                                                .ghost()
+                                                .small()
+                                                .flex_1()
+                                                .label("Window")
+                                                .selected(!self.settings_open)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.settings_open = false;
+                                                    cx.notify();
+                                                })),
+                                        )
+                                        .child(
+                                            Button::new("layout-element-properties")
+                                                .ghost()
+                                                .small()
+                                                .flex_1()
+                                                .label(self.settings.read(cx).page_label())
+                                                .selected(self.settings_open)
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.settings_open = true;
+                                                    cx.notify();
+                                                })),
+                                        ),
+                                )
+                                .child(if self.settings_open {
+                                    self.settings.clone().into_any_element()
+                                } else {
+                                    self.render_inspector(cx).into_any_element()
+                                }),
+                        )),
                 )
                 .child(self.render_footer(cx))
                 .into_any_element(),
@@ -872,6 +933,8 @@ mod tests {
         });
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
             let active = [
                 "overview",
                 "overview_2",
@@ -901,9 +964,11 @@ mod tests {
                     "{id}"
                 );
             }
-            assert_eq!(
-                window.find("window-bytes:market").bounds().size.height,
-                px(20.)
+            assert!(
+                (f32::from(window.find("window-bytes:market").bounds().size.height)
+                    - 20. * editor.read(cx).mapping().scale)
+                    .abs()
+                    < 1.
             );
             let stack = editor
                 .read(cx)
@@ -948,6 +1013,8 @@ mod tests {
                 400
             );
             window.click("list-bytes:overview", cx);
+            window.render_frame(cx);
+            window.click("layout-window-properties", cx);
             window.render_frame(cx);
             window.click("flag-open", cx);
             window.render_frame(cx);
@@ -1035,6 +1102,8 @@ mod tests {
             window.render_frame(cx);
             window.find("window-bytes:overview");
             window.find("window-bytes:droneview");
+            window.click("layout-window-properties", cx);
+            window.render_frame(cx);
             window.click("flag-preview-hidden", cx);
             window.render_frame(cx);
             assert!(window.try_find("window-bytes:overview").is_none());

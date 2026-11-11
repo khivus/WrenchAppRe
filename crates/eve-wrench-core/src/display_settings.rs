@@ -72,6 +72,37 @@ impl SettingsDocument {
         Self::get(&self.root, section, key)
     }
 
+    pub fn overview_records(&self) -> Vec<String> {
+        self.root
+            .get("bytes:overview")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .filter(|(_, record)| {
+                record
+                    .get("tuple")
+                    .and_then(Value::as_array)
+                    .is_some_and(|a| a.len() == 2)
+            })
+            .filter_map(|(key, _)| key.strip_prefix("bytes:").map(str::to_owned))
+            .collect()
+    }
+
+    fn validate_change(&self, section: &str, key: &str, value: &Value) -> Result<(), String> {
+        // Uncatalogued overview records can be edited in place, retaining every
+        // key, list length and marshal scalar type. Known controls keep their
+        // stronger semantic validation, including tab names and color bounds.
+        if self.kind == SettingsKind::User
+            && section == "overview"
+            && !overview::validated_key(key)
+            && let Some(original) = Self::get(&self.original_root, section, key)
+            && overview::same_shape(original, value)
+        {
+            return Ok(());
+        }
+        validate(self.kind, section, key, value)
+    }
+
     fn get<'a>(root: &'a Value, section: &str, key: &str) -> Option<&'a Value> {
         root.get(format!("bytes:{section}"))?
             .get(format!("bytes:{key}"))?
@@ -110,7 +141,7 @@ impl SettingsDocument {
     }
 
     pub fn set(&mut self, section: &str, key: &str, value: Value) -> Result<(), String> {
-        validate(self.kind, section, key, &value)?;
+        self.validate_change(section, key, &value)?;
         let section_key = format!("bytes:{section}");
         let key_name = format!("bytes:{key}");
         let root = self
@@ -162,7 +193,7 @@ impl SettingsDocument {
         let mut output = self.original_root.clone();
         for (section, key) in &self.changed {
             let value = self.value(section, key).ok_or("Missing changed setting")?;
-            validate(self.kind, section, key, value)?;
+            self.validate_change(section, key, value)?;
             let section_key = format!("bytes:{section}");
             let map = output
                 .as_object_mut()

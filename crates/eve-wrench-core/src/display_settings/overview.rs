@@ -33,6 +33,94 @@ pub const COLUMNS: &[(&str, &str, i64)] = &[
     ("ANGULARVELOCITY", "Angular velocity", 100),
 ];
 pub const DEFAULT_COLUMNS: &[&str] = &["ICON", "DISTANCE", "NAME", "TYPE", "VELOCITY"];
+
+pub const OPTIONS: &[(&str, &str, bool)] = &[
+    (
+        "applyToOtherObjects",
+        "Apply state filters to other objects",
+        false,
+    ),
+    (
+        "applyToStructures",
+        "Apply state filters to structures",
+        false,
+    ),
+    ("hideCorpTicker", "Hide corporation ticker", false),
+    ("overviewBroadcastsToTop", "Fleet broadcasts on top", false),
+    (
+        "showBiggestDamageDealers",
+        "Show biggest damage dealers",
+        false,
+    ),
+    (
+        "showCategoryInTargetRange_6",
+        "Show ships in target range",
+        true,
+    ),
+    (
+        "showCategoryInTargetRange_11",
+        "Show NPCs in target range",
+        true,
+    ),
+    (
+        "showCategoryInTargetRange_18",
+        "Show drones in target range",
+        true,
+    ),
+    ("showInTargetRange", "Show target range", true),
+    ("showModuleHairlines", "Show module hairlines", true),
+    ("targetCrosshair", "Show target crosshair", true),
+    ("useSmallColorTags", "Small color tags", false),
+    ("useSmallText", "Small overview text", false),
+    ("viewTactical", "Tactical overlay", false),
+    ("viewTactical_camTactical", "Tactical camera overlay", false),
+];
+
+pub(super) fn validated_key(key: &str) -> bool {
+    matches!(
+        key,
+        "tabsettings_new"
+            | "overviewProfilePresets"
+            | "stateColors"
+            | "stateBlinks"
+            | "flagStates2"
+            | "backgroundStates2"
+            | "flagOrder2"
+            | "backgroundOrder2"
+            | "overviewColumnOrder"
+            | "overviewColumns"
+            | "tabsByWindowInstanceID"
+            | "activeOverviewPreset"
+            | "alwaysShow"
+            | "filterOut"
+            | "unfiltered"
+            | "shipLabels"
+    ) || OPTIONS.iter().any(|(name, _, _)| *name == key)
+}
+
+/// Shape-preserving editing for saved records not covered by a semantic control.
+pub fn same_shape(original: &Value, value: &Value) -> bool {
+    match (original, value) {
+        (Value::Object(a), Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(key, v)| b.get(key).is_some_and(|w| same_shape(v, w)))
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_shape(a, b))
+        }
+        (Value::String(a), Value::String(b)) => {
+            ["bytes:", "utf8:", "long:"].iter().any(|prefix| {
+                a.starts_with(prefix)
+                    && b.starts_with(prefix)
+                    && (*prefix != "long:" || integer(value).is_some())
+            }) || (!a.contains(':') && !b.contains(':'))
+        }
+        (Value::Number(a), Value::Number(b)) => a.is_f64() == b.is_f64(),
+        (Value::Bool(_), Value::Bool(_)) | (Value::Null, Value::Null) => true,
+        _ => false,
+    }
+}
 pub fn default_states(background: bool) -> &'static [i64] {
     if background {
         &[51, 50, 9, 11, 12, 66, 14, 13, 44, 45, 52]
@@ -368,7 +456,38 @@ fn color(value: &Value, len: usize) -> bool {
         })
 }
 pub(super) fn validate_setting(key: &str, value: &Value) -> bool {
+    if OPTIONS.iter().any(|(name, _, _)| *name == key) {
+        return boolean(value).is_some();
+    }
     match key {
+        "shipLabels" => value.as_array().is_some_and(|labels| {
+            labels.len() <= 100
+                && labels.iter().all(|label| {
+                    label.as_object().is_some_and(|fields| {
+                        fields.iter().all(|(key, value)| match key.as_str() {
+                            "bytes:type" | "bytes:pre" | "bytes:post" => {
+                                value.is_null()
+                                    || text(value).is_some_and(|s| s.chars().count() <= 500)
+                            }
+                            "bytes:state" | "bytes:bold" | "bytes:italic" | "bytes:underline" => {
+                                value.is_null() || boolean(value).is_some()
+                            }
+                            "bytes:fontsize" => {
+                                value.is_null()
+                                    || integer(value).is_some_and(|n| (6..=64).contains(&n))
+                            }
+                            "bytes:color" => value.is_null() || color(value, 4),
+                            _ => true,
+                        })
+                    })
+                })
+        }),
+        "overviewColumnOrder" | "overviewColumns" => string_list(value),
+        "activeOverviewPreset" => text(value).is_some() || value.is_null(),
+        "alwaysShow" | "filterOut" | "unfiltered" => value.is_null() || id_list(value),
+        "tabsByWindowInstanceID" => value
+            .as_array()
+            .is_some_and(|windows| windows.len() <= 100 && windows.iter().all(id_list)),
         "tabsettings_new" => value.as_object().is_some_and(|tabs| {
             !tabs.is_empty()
                 && tabs.len() <= 100

@@ -236,6 +236,8 @@ pub struct MainView {
     character_scroll: scroll::TableScroll,
     backup_scroll: scroll::TableScroll,
     browser_rows: Option<std::rc::Rc<browser::BrowserRows>>,
+    column_widths: HashMap<String, f32>,
+    column_resize: Option<(String, f32, f32)>,
     entry_search: Entity<InputState>,
     entry_query: SearchQuery,
     settings_panel: Entity<settings_panel::SettingsPanel>,
@@ -346,6 +348,8 @@ impl MainView {
             character_scroll: scroll::TableScroll::default(),
             backup_scroll: scroll::TableScroll::default(),
             browser_rows: None,
+            column_widths: HashMap::new(),
+            column_resize: None,
             entry_search,
             entry_query: SearchQuery::default(),
             settings_panel,
@@ -471,19 +475,41 @@ impl Render for MainView {
         let body = match self.store.read(cx).data().map(|d| d.is_empty()) {
             None => self.render_loading(cx).into_any_element(),
             Some(true) => self.render_empty(cx).into_any_element(),
-            Some(false) => h_flex()
-                .flex_1()
-                .items_stretch()
-                .overflow_hidden()
-                .child(self.render_browser(window, cx))
-                .when(!self.tab.is_some_and(Tab::is_editor), |this| {
-                    this.child(self.render_copy_panel(cx))
-                })
-                .into_any_element(),
+            Some(false) => {
+                let browser = self.render_browser(window, cx);
+                if self.tab.is_some_and(Tab::is_editor) {
+                    browser.into_any_element()
+                } else {
+                    gpui_kit::component::resizable::h_resizable("browser-copy-columns")
+                        .child(ui::pane(None, browser))
+                        .child(ui::pane(Some(300.), self.render_copy_panel(cx)))
+                        .into_any_element()
+                }
+            }
         };
 
         v_flex()
             .size_full()
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
+                if let Some((key, start_x, start_width)) = &this.column_resize {
+                    let width =
+                        (*start_width + f32::from(event.position.x) - *start_x).clamp(60., 720.);
+                    this.column_widths.insert(key.clone(), width);
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| {
+                    this.column_resize = None;
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, _| {
+                    this.column_resize = None;
+                }),
+            )
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(self.render_title_bar(window, cx))

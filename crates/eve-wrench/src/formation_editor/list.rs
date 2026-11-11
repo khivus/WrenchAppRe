@@ -189,7 +189,8 @@ impl FormationEditor {
             .collect();
 
         v_flex()
-            .w(px(232.))
+            .w_full()
+            .h_full()
             .flex_none()
             .border_r_1()
             .border_color(cx.theme().border)

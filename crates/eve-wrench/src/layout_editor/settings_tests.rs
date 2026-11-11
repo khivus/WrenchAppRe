@@ -19,6 +19,138 @@ fn encode(value: Value) -> Vec<u8> {
     )
     .unwrap()
 }
+
+#[gpui_kit::test]
+fn sidebar_selection_and_preview_dropdowns_open_the_matching_editor(cx: &mut TestAppContext) {
+    let (handle, editor, files) = setup(cx);
+    let original = std::fs::read(&files.account).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click("sidebar-tab-bytes:overview-0", cx);
+        window.render_frame(cx);
+        assert!(editor.read(cx).settings_open);
+        assert_eq!(
+            editor.read(cx).settings.read(cx).selected_tab.as_deref(),
+            Some("int:0")
+        );
+        window.find("overview-tab");
+        assert!(window.try_find("layout-settings").is_none());
+        assert!(window.try_find("display-page-overview").is_none());
+        window.click("layout-fighters", cx);
+        window.render_frame(cx);
+        window.click("fighter-count-5", cx);
+        window.render_frame(cx);
+        assert_eq!(editor.read(cx).scene, Scene::Space);
+        assert_eq!(editor.read(cx).fighter_count, 5);
+        window.find("preview-fighter-squadron-4");
+        window.click("layout-targets", cx);
+        window.render_frame(cx);
+        window.click("target-count-3", cx);
+        window.render_frame(cx);
+        window.find("preview-target-2");
+        assert!(window.try_find("preview-target-3").is_none());
+        assert_eq!(editor.read(cx).fighter_count, 5);
+        assert!(!editor.read(cx).has_pending_edits());
+        window.click("sidebar-neocom", cx);
+        window.render_frame(cx);
+        window.find("display-field-NeocomWidth");
+        let sidebar = window.find("layout-sidebar").bounds();
+        let start = point(sidebar.right(), sidebar.top() + px(100.));
+        window.drag(start, start + point(px(60.), px(0.)), cx);
+        window.render_frame(cx);
+        window.render_frame(cx);
+        assert!(window.find("layout-sidebar").bounds().size.width > sidebar.size.width + px(30.));
+        assert!(!editor.read(cx).has_pending_edits());
+    })
+    .unwrap();
+    assert_eq!(std::fs::read(&files.account).unwrap(), original);
+}
+
+#[gpui_kit::test]
+fn saved_record_controls_edit_real_leaf_types_and_stage_optional_label_fields(
+    cx: &mut TestAppContext,
+) {
+    let (handle, editor, files) = setup(cx);
+    let mut account = read(&files.account);
+    account["bytes:overview"]["bytes:shipLabels"] = json!({"tuple": ["long:1", [
+        {"bytes:type": "utf8:pilot name", "bytes:pre": "utf8:[", "bytes:state": 1, "bytes:fontsize": null, "bytes:color": null},
+        {"bytes:type": "utf8:ship type", "bytes:pre": "utf8:<", "bytes:state": 0, "bytes:fontsize": null, "bytes:color": null}
+    ]]});
+    let original = encode(account);
+    std::fs::write(&files.account, &original).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        editor.read(cx).settings.clone().update(cx, |settings, cx| {
+            settings.load(PathBuf::from(&files.account), true, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.overview_records_open = true;
+            cx.notify();
+        });
+        window.render_frame(cx);
+        window.click("sidebar-record-shipLabels", cx);
+        window.render_frame(cx);
+        enter(
+            Field::OverviewLeaf("shipLabels".into(), "/0/bytes:fontsize".into()),
+            "14",
+            window,
+            cx,
+        );
+        enter(
+            Field::OverviewLeaf("shipLabels".into(), "/0/bytes:color".into()),
+            "12ABEF",
+            window,
+            cx,
+        );
+        enter(
+            Field::OverviewLeaf("shipLabels".into(), "/0/bytes:pre".into()),
+            "(",
+            window,
+            cx,
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        {
+            let s = editor.read(cx).settings.read(cx);
+            assert!(
+                s.invalid.is_empty(),
+                "invalid={:?}, error={:?}",
+                s.invalid,
+                s.error
+            );
+            assert_eq!(
+                s.doc(SettingsKind::User)
+                    .unwrap()
+                    .value("overview", "shipLabels")
+                    .unwrap()[0]["bytes:pre"],
+                "utf8:(",
+                "error={:?}",
+                s.error
+            );
+        }
+        click("record-down-0", window, cx);
+        window.render_frame(cx);
+        let settings = editor.read(cx).settings.read(cx);
+        let labels = settings
+            .doc(SettingsKind::User)
+            .unwrap()
+            .value("overview", "shipLabels")
+            .unwrap();
+        assert_eq!(labels[1]["bytes:pre"], "utf8:(");
+        assert_eq!(labels[1]["bytes:fontsize"], 14);
+        assert_eq!(labels[1]["bytes:color"]["tuple"][3], 1.);
+        assert_eq!(labels[1]["bytes:state"], 1);
+        assert!(editor.read(cx).has_pending_edits());
+    })
+    .unwrap();
+    assert_eq!(std::fs::read(&files.account).unwrap(), original);
+}
 fn read(path: &str) -> Value {
     blue_marshal::to_json(
         &blue_marshal::decode(&std::fs::read(path).unwrap())
@@ -245,10 +377,14 @@ fn preview_tabs_sample_windows_chat_dividers_and_sorting_follow_the_selected_acc
             window.find(format!("sample-content-bytes:{id}"));
         }
         window.find("chat-preview-bytes:chatchannel_local");
-        window.click("layout-settings", cx);
+        window.click("sidebar-overview", cx);
         window.render_frame(cx);
         window.render_frame(cx);
-        window.click("display-page-chats", cx);
+        editor.update(cx, |editor, cx| {
+            editor
+                .settings
+                .update(cx, |s, cx| s.select_chat("chatchannel_local", cx));
+        });
         window.render_frame(cx);
         enter(Field::ChatWidth("local".into()), "180", window, cx);
         enter(Field::ChatInput("local".into()), "40", window, cx);
@@ -294,7 +430,7 @@ fn preview_tabs_sample_windows_chat_dividers_and_sorting_follow_the_selected_acc
 fn overview_scrolling_keeps_column_controls_bounded_and_reuses_the_canvas(cx: &mut TestAppContext) {
     let (handle, editor, _files) = setup(cx);
     cx.update_window(handle, |_, window, cx| {
-        window.click("layout-settings", cx);
+        window.click("sidebar-overview", cx);
         window.render_frame(cx);
         window.render_frame(cx);
         let settings = editor.read(cx).settings.clone();
@@ -350,6 +486,7 @@ fn scenes_targets_and_fighter_counts_preview_without_changing_files(cx: &mut Tes
         for scene in Scene::ALL {
             editor.update(cx, |editor, cx| {
                 editor.scene = scene;
+                editor.fighter_count = scene.fighter_count();
                 cx.notify();
             });
             window.render_frame(cx);
@@ -387,15 +524,18 @@ fn scenes_targets_and_fighter_counts_preview_without_changing_files(cx: &mut Tes
             cx.notify();
         });
         window.render_frame(cx);
-        window.click("layout-targets", cx);
+        editor.update(cx, |editor, cx| {
+            editor.show_targets = true;
+            cx.notify();
+        });
         window.render_frame(cx);
         let first = window.find("preview-target-0").bounds();
         let second = window.find("preview-target-1").bounds();
         assert_eq!(first.origin.y, second.origin.y);
         assert!(second.origin.x < first.origin.x);
-        window.click("layout-settings", cx);
+        window.click("sidebar-overview", cx);
         window.render_frame(cx);
-        window.click("display-page-targets", cx);
+        window.click("sidebar-targets", cx);
         window.render_frame(cx);
         window.click("target-count-more", cx);
         window.render_frame(cx);
@@ -501,7 +641,7 @@ fn overview_and_character_settings_save_separately_with_backups(cx: &mut TestApp
         })
     });
     cx.update_window(handle, |_, window, cx| {
-        window.click("layout-settings", cx);
+        window.click("sidebar-overview", cx);
         window.render_frame(cx);
         let settings = editor.read(cx).settings.clone();
         crate::scrolling::tests::check_vertical(&settings, |s| &mut s.scroll, window, cx);
@@ -521,13 +661,13 @@ fn overview_and_character_settings_save_separately_with_backups(cx: &mut TestApp
         assert!(editor.read(cx).has_pending_edits());
         assert!(!editor.read(cx).is_dirty());
         window.render_frame(cx);
-        window.click("overview-section-1", cx);
+        click("overview-section-1", window, cx);
         window.render_frame(cx);
         window.click("filter-group-27", cx);
         window.render_frame(cx);
         window.click("filter-always-11", cx);
         window.render_frame(cx);
-        window.click("overview-section-2", cx);
+        click("overview-section-2", window, cx);
         window.render_frame(cx);
         window.click("state-blink-11", cx);
         window.render_frame(cx);
@@ -567,7 +707,7 @@ fn overview_and_character_settings_save_separately_with_backups(cx: &mut TestApp
             240
         );
         window.render_frame(cx);
-        window.click("display-page-neocom", cx);
+        window.click("sidebar-neocom", cx);
         window.render_frame(cx);
         enter(Field::NeocomWidth, "999", window, cx);
     })

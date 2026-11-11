@@ -561,13 +561,10 @@ impl Render for FormationEditor {
                 .flex_1()
                 .min_h_0()
                 .child(
-                    h_flex()
-                        .flex_1()
-                        .min_h_0()
-                        .items_stretch()
-                        .child(self.render_list(cx))
-                        .child(self.render_viewport(cx))
-                        .child(self.render_inspector(cx)),
+                    gpui_kit::component::resizable::h_resizable("probe-columns")
+                        .child(ui::pane(Some(232.), self.render_list(cx)))
+                        .child(ui::pane(None, self.render_viewport(cx)))
+                        .child(ui::pane(Some(360.), self.render_inspector(cx))),
                 )
                 .child(self.render_footer(cx))
                 .into_any_element(),

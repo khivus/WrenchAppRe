@@ -120,7 +120,7 @@ impl LayoutEditor {
             .flex_1()
             .min_h_0()
             .overflow_hidden()
-            .text_size(px((11. * scale).clamp(6., 14.)))
+            .text_size(px(11. * scale))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
                 h_flex()
@@ -158,8 +158,13 @@ impl LayoutEditor {
                             .text_color(color)
                             .cursor_pointer()
                             .child(item.name)
-                            .on_click(cx.listener(move |this, _, _, cx| {
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 cx.stop_propagation();
+                                this.select(Some(key.clone()), window, cx);
+                                this.settings.update(cx, |settings, cx| {
+                                    settings.select_overview_tab(item.key.clone(), cx)
+                                });
+                                this.settings_open = true;
                                 this.preview_overview_tabs.insert(key.clone(), item.id);
                                 cx.notify();
                             }))
@@ -302,7 +307,7 @@ impl LayoutEditor {
                                     .test_support()
                                     .flex_none()
                                     .px(px(6. * mapping.scale))
-                                    .text_size(px((11. * mapping.scale).clamp(6., 14.)))
+                                    .text_size(px(11. * mapping.scale))
                                     .whitespace_nowrap()
                                     .border_b_1()
                                     .border_color(if member.key == selected.key {
@@ -334,7 +339,7 @@ impl LayoutEditor {
                 .min_h_0()
                 .min_w_0()
                 .overflow_hidden()
-                .text_size(px((12. * scale).clamp(6., 15.)))
+                .text_size(px(12. * scale))
         };
         if eve_wrench_core::display_settings::chat::channel(id).is_some() {
             let layout = ChatLayout::read(self.preview_settings.doc(SettingsKind::User), id);

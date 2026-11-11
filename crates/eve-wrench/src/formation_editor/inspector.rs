@@ -318,7 +318,8 @@ impl FormationEditor {
 
         self.inspector_scroll
             .view("inspector", content, |this| &mut this.inspector_scroll, cx)
-            .w(px(360.))
+            .w_full()
+            .h_full()
             .flex_none()
             .border_l_1()
             .border_color(cx.theme().border)

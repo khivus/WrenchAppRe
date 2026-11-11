@@ -5,6 +5,78 @@ use crate::window_layout::WindowState;
 struct Fixture(PathBuf);
 
 #[test]
+fn extended_overview_edits_preserve_native_types_and_reject_structural_changes() {
+    let file = Fixture::new("user", true);
+    let (mut root, crc) = crate::marshal::load_settings_json(&file.0).unwrap();
+    let labels = json!([{"bytes:type": "bytes:pilot name", "bytes:state": true, "bytes:prefix": "utf8:<", "bytes:suffix": "utf8:>"}]);
+    root["bytes:overview"]["bytes:shipLabels"] = json!({"tuple": ["long:17", labels]});
+    root["bytes:overview"]["bytes:futurePreference"] =
+        json!({"tuple": ["long:18", {"bytes:amount": "long:3", "bytes:ratio": 0.5}]});
+    fs::write(&file.0, encode_settings_json(&root, crc).unwrap()).unwrap();
+    let original = fs::read(&file.0).unwrap();
+    let mut doc = SettingsDocument::load(&file.0).unwrap();
+    assert!(doc.overview_records().contains(&"shipLabels".into()));
+    let mut changed = labels.clone();
+    changed[0]["bytes:prefix"] = json!("utf8:[");
+    doc.set("overview", "shipLabels", changed.clone()).unwrap();
+    changed[0]["bytes:state"] = json!("utf8:wrong");
+    assert!(doc.set("overview", "shipLabels", changed).is_err());
+    assert!(
+        doc.set(
+            "overview",
+            "shipLabels",
+            json!([{"bytes:color": {"tuple": [2.,0.,0.,1.]}}])
+        )
+        .is_err()
+    );
+    assert!(
+        doc.set(
+            "overview",
+            "futurePreference",
+            json!({"bytes:amount": "utf8:3", "bytes:ratio": 0.5})
+        )
+        .is_err()
+    );
+    assert!(
+        doc.set("overview", "missingPreference", json!(true))
+            .is_err()
+    );
+    assert!(
+        doc.set("overview", "useSmallText", json!("utf8:yes"))
+            .is_err()
+    );
+    doc.set("overview", "useSmallText", json!(true)).unwrap();
+    doc.set(
+        "overview",
+        "overviewColumns",
+        json!(["bytes:NAME", "bytes:DISTANCE"]),
+    )
+    .unwrap();
+    doc.set("overview", "tabsByWindowInstanceID", json!([[0], []]))
+        .unwrap();
+    assert!(
+        set_tab(
+            &mut doc,
+            "int:0",
+            "name",
+            json!("utf8:This tab name is much too long")
+        )
+        .is_err()
+    );
+    let (doc, backup) = doc.save().unwrap();
+    assert_eq!(fs::read(backup.unwrap()).unwrap(), original);
+    assert_eq!(
+        doc.value("overview", "shipLabels").unwrap()[0]["bytes:prefix"],
+        "utf8:["
+    );
+    assert_eq!(
+        doc.value("overview", "futurePreference"),
+        Some(&root["bytes:overview"]["bytes:futurePreference"]["tuple"][1])
+    );
+    assert_eq!(doc.value("overview", "useSmallText"), Some(&json!(true)));
+}
+
+#[test]
 fn chat_dividers_and_sorting_save_only_their_settings_with_backups() {
     let file = Fixture::new("user", true);
     let original = fs::read(&file.0).unwrap();

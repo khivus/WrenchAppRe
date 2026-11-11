@@ -476,7 +476,8 @@ impl ConfirmationsEditor {
                 |this| &mut this.sidebar_scroll,
                 cx,
             )
-            .w(px(210.))
+            .w_full()
+            .h_full()
             .flex_none()
             .border_r_1()
             .border_color(cx.theme().border.opacity(0.6))
@@ -871,13 +872,9 @@ impl Render for ConfirmationsEditor {
                     .child(t!("common.loading").to_string())
                     .into_any_element()
             } else {
-                h_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .items_stretch()
-                    .gap_4()
-                    .child(self.render_sidebar(&rows, cx))
-                    .child(self.render_list(&rows, cx))
+                gpui_kit::component::resizable::h_resizable("confirmation-columns")
+                    .child(ui::pane(Some(210.), self.render_sidebar(&rows, cx)))
+                    .child(ui::pane(None, self.render_list(&rows, cx)))
                     .into_any_element()
             })
             .child(self.render_footer(cx))
@@ -1058,7 +1055,7 @@ mod tests {
             assert_eq!(editor.read(cx).sidebar_scroll.handle.offset().y, px(0.));
         })
         .unwrap();
-        cx.simulate_window_resize(handle, size(px(1440.), px(330.)));
+        cx.simulate_window_resize(handle, size(px(1440.), px(300.)));
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             let editor = main

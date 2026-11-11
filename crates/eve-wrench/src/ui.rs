@@ -25,6 +25,23 @@ pub trait StyleExt: Styled + Sized {
 
 impl<T: Styled> StyleExt for T {}
 
+/// Full-height, top-aligned content inside a draggable column.
+pub fn pane(
+    width: Option<f32>,
+    content: impl IntoElement,
+) -> gpui_kit::component::resizable::ResizablePanel {
+    gpui_kit::component::resizable::resizable_panel()
+        .map(|panel| match width {
+            Some(width) => panel.size(px(width)).size_range(px(180.)..px(720.)),
+            None => panel.size_range(px(180.)..Pixels::MAX),
+        })
+        .flex_col()
+        .items_stretch()
+        .min_h_0()
+        .overflow_hidden()
+        .child(content)
+}
+
 pub fn theme_mode(preference: ThemePreference) -> ThemeMode {
     match preference {
         ThemePreference::Light => ThemeMode::Light,

@@ -35,6 +35,8 @@ use std::{
 mod chats_ui;
 #[path = "settings_overview.rs"]
 mod overview_ui;
+#[path = "settings_records.rs"]
+mod records_ui;
 #[cfg(test)]
 #[path = "settings_tests.rs"]
 mod tests;
@@ -46,15 +48,9 @@ pub(super) enum Page {
     Neocom,
     Fighters,
     Chats,
+    OverviewRecord,
 }
 impl Page {
-    const ALL: [Self; 5] = [
-        Self::Overview,
-        Self::Targets,
-        Self::Neocom,
-        Self::Fighters,
-        Self::Chats,
-    ];
     fn id(self) -> &'static str {
         match self {
             Self::Overview => "overview",
@@ -62,6 +58,7 @@ impl Page {
             Self::Neocom => "neocom",
             Self::Fighters => "fighters",
             Self::Chats => "chats",
+            Self::OverviewRecord => "overview",
         }
     }
 }
@@ -78,6 +75,7 @@ enum Field {
     Width(i64, String),
     ChatWidth(String),
     ChatInput(String),
+    OverviewLeaf(String, String),
 }
 impl Field {
     fn kind(&self) -> SettingsKind {
@@ -119,6 +117,8 @@ pub(super) struct DisplayEditor {
     columns_top: std::rc::Rc<std::cell::Cell<f32>>,
     pub(super) chats: Vec<String>,
     selected_chat: Option<String>,
+    pub(super) selected_record: Option<String>,
+    pub(super) record_page: usize,
 }
 
 pub(super) struct DisplayChanged;
@@ -222,6 +222,8 @@ impl DisplayEditor {
             columns_top: Default::default(),
             chats: Vec::new(),
             selected_chat: None,
+            selected_record: None,
+            record_page: 0,
         };
         result.load(character, false, window, cx);
         let accounts = result.accounts(cx);
@@ -290,6 +292,41 @@ impl DisplayEditor {
         self.status = None;
         cx.emit(DisplayChanged);
         cx.notify();
+    }
+    pub(super) fn select_overview_window(&mut self, id: &str, cx: &mut Context<Self>) {
+        let instance = id
+            .strip_prefix("overview_")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        self.selected_tab = self.doc(SettingsKind::User).and_then(|doc| {
+            overview::assigned_tabs(doc, instance)
+                .first()
+                .map(|tab| tab.key.clone())
+        });
+        self.selected_preset = None;
+        self.open_page(Page::Overview, cx);
+    }
+    pub(super) fn select_overview_tab(&mut self, key: String, cx: &mut Context<Self>) {
+        self.selected_tab = Some(key);
+        self.selected_preset = None;
+        self.open_page(Page::Overview, cx);
+    }
+    pub(super) fn select_record(&mut self, key: String, cx: &mut Context<Self>) {
+        self.selected_record = Some(key);
+        self.record_page = 0;
+        self.open_page(Page::OverviewRecord, cx);
+    }
+    pub(super) fn select_preset(&mut self, key: String, cx: &mut Context<Self>) {
+        self.selected_preset = Some(key);
+        self.overview_section = 1;
+        self.open_page(Page::Overview, cx);
+    }
+    pub(super) fn select_chat(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.selected_chat = Some(id.to_owned());
+        self.open_page(Page::Chats, cx);
+    }
+    pub(super) fn page_label(&self) -> String {
+        t!(format!("display.pages.{}", self.page.id())).to_string()
     }
     pub(super) fn open_page(&mut self, page: Page, cx: &mut Context<Self>) {
         self.page = page;
@@ -478,6 +515,37 @@ impl DisplayEditor {
     fn field_value(&self, field: &Field) -> String {
         let doc = self.doc(field.kind());
         match field {
+            Field::OverviewLeaf(key, pointer) => doc
+                .and_then(|doc| doc.value("overview", key))
+                .and_then(|value| value.pointer(pointer))
+                .map(|value| {
+                    if key == "shipLabels" && pointer.ends_with("/bytes:color") {
+                        return value
+                            .get("tuple")
+                            .and_then(Value::as_array)
+                            .filter(|v| v.len() == 4)
+                            .map(|v| {
+                                format!(
+                                    "{:02X}{:02X}{:02X}",
+                                    (v[0].as_f64().unwrap_or(0.) * 255.).round() as u8,
+                                    (v[1].as_f64().unwrap_or(0.) * 255.).round() as u8,
+                                    (v[2].as_f64().unwrap_or(0.) * 255.).round() as u8
+                                )
+                            })
+                            .unwrap_or_default();
+                    }
+                    match value {
+                        Value::String(s) => s
+                            .strip_prefix("bytes:")
+                            .or_else(|| s.strip_prefix("utf8:"))
+                            .or_else(|| s.strip_prefix("long:"))
+                            .unwrap_or(s)
+                            .to_owned(),
+                        Value::Null => String::new(),
+                        _ => value.to_string(),
+                    }
+                })
+                .unwrap_or_default(),
             Field::NeocomWidth => doc
                 .and_then(|d| d.value("ui", "neocomWidth"))
                 .and_then(integer)
@@ -549,6 +617,73 @@ impl DisplayEditor {
         let doc = self.doc_mut(field.kind())?;
         let bad = || t!("display.invalidValue").to_string();
         match field {
+            Field::OverviewLeaf(key, pointer) => {
+                let mut record = doc.value("overview", key).cloned().ok_or_else(bad)?;
+                let leaf = record.pointer_mut(pointer).ok_or_else(bad)?;
+                let property = pointer.rsplit('/').next().unwrap_or("");
+                *leaf = if key == "shipLabels" && property == "bytes:color" {
+                    if value.is_empty() {
+                        Value::Null
+                    } else {
+                        let rgb = parse_color(value).ok_or_else(bad)?;
+                        let alpha = leaf
+                            .get("tuple")
+                            .and_then(|v| v.get(3))
+                            .and_then(Value::as_f64)
+                            .unwrap_or(1.);
+                        json!({"tuple": [rgb[0], rgb[1], rgb[2], alpha]})
+                    }
+                } else if key == "shipLabels" && property == "bytes:fontsize" {
+                    if value.is_empty() {
+                        Value::Null
+                    } else {
+                        json!(value.parse::<i64>().map_err(|_| bad())?)
+                    }
+                } else if key == "shipLabels" && leaf.is_null() {
+                    if value.is_empty() {
+                        Value::Null
+                    } else {
+                        match property {
+                            "bytes:pre" | "bytes:post" | "bytes:type" => {
+                                json!(format!("utf8:{value}"))
+                            }
+                            "bytes:color" => {
+                                let rgb = parse_color(value).ok_or_else(bad)?;
+                                json!({"tuple": [rgb[0], rgb[1], rgb[2], 1.]})
+                            }
+                            "bytes:state" | "bytes:bold" | "bytes:italic" | "bytes:underline" => {
+                                json!(value.parse::<bool>().map_err(|_| bad())?)
+                            }
+                            _ => return Err(bad()),
+                        }
+                    }
+                } else {
+                    match leaf {
+                        Value::String(s) => {
+                            if s.starts_with("long:") {
+                                value.parse::<i64>().map_err(|_| bad())?;
+                                json!(format!("long:{value}"))
+                            } else {
+                                let prefix = if s.starts_with("bytes:") {
+                                    "bytes:"
+                                } else if s.starts_with("utf8:") {
+                                    "utf8:"
+                                } else {
+                                    ""
+                                };
+                                json!(format!("{prefix}{value}"))
+                            }
+                        }
+                        Value::Number(n) if n.is_f64() => {
+                            json!(value.parse::<f64>().map_err(|_| bad())?)
+                        }
+                        Value::Number(_) => json!(value.parse::<i64>().map_err(|_| bad())?),
+                        Value::Bool(_) => json!(value.parse::<bool>().map_err(|_| bad())?),
+                        _ => return Err(bad()),
+                    }
+                };
+                doc.set("overview", key, record)
+            }
             Field::NeocomWidth => doc.set(
                 "ui",
                 "neocomWidth",
@@ -1019,6 +1154,7 @@ impl Render for DisplayEditor {
             Page::Neocom => self.render_neocom(window, cx),
             Page::Fighters => self.render_fighters(window, cx),
             Page::Chats => self.render_chats(window, cx),
+            Page::OverviewRecord => self.render_record(window, cx),
         };
         let saves = [SettingsKind::User, SettingsKind::Char]
             .into_iter()
@@ -1084,30 +1220,17 @@ impl Render for DisplayEditor {
             .on_action(|_: &super::Undo, _, cx| cx.stop_propagation())
             .on_action(|_: &super::Redo, _, cx| cx.stop_propagation())
             .on_action(|_: &super::Save, _, cx| cx.stop_propagation())
-            .w(px(392.))
-            .flex_none()
+            .w_full()
+            .flex_1()
             .min_h_0()
             .border_l_1()
             .border_color(cx.theme().border)
             .child(
-                v_flex()
-                    .flex_none()
-                    .p_3()
-                    .gap_2()
-                    .child(h_flex().gap_1().children(Page::ALL.into_iter().map(|page| {
-                        Button::new(SharedString::from(format!("display-page-{}", page.id())))
-                            .ghost()
-                            .xsmall()
-                            .flex_1()
-                            .selected(self.page == page)
-                            .label(t!(format!("display.pages.{}", page.id())).to_string())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.page = page;
-                                this.scroll.reset();
-                                cx.emit(DisplayChanged);
-                                cx.notify();
-                            }))
-                    }))),
+                v_flex().flex_none().p_3().gap_2().child(
+                    div()
+                        .text_sm()
+                        .child(t!(format!("display.pages.{}", self.page.id())).to_string()),
+                ),
             )
             .child(
                 self.scroll

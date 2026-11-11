@@ -610,6 +610,8 @@ fn layout_tab_preserves_drafts_blocks_updates_and_syncs_only_characters(cx: &mut
         assert!(window.find("layout-editor").bounds().bottom() <= window.viewport_size().height);
         window.click("list-bytes:overview", cx);
         window.render_frame(cx);
+        window.click("layout-window-properties", cx);
+        window.render_frame(cx);
         window.click("flag-locked", cx);
         assert!(
             main.read(cx).layout_editors[&files.character]
@@ -747,6 +749,8 @@ fn geometry_reset_is_undoable_backs_up_and_preserves_stack_state_without_syncing
     cx.update_window(handle, |_, window, cx| {
         window.click("list-bytes:overview", cx);
         window.render_frame(cx);
+        window.click("layout-window-properties", cx);
+        window.render_frame(cx);
         window.click("layout-reset-geometry", cx);
         window.render_frame(cx);
         assert!(window.try_find("window-bytes:overview").is_none());
@@ -781,6 +785,8 @@ fn geometry_reset_is_undoable_backs_up_and_preserves_stack_state_without_syncing
                 .is_dirty()
         );
         window.click("list-bytes:548", cx);
+        window.render_frame(cx);
+        window.click("layout-window-properties", cx);
         window.render_frame(cx);
         window.click("layout-reset-geometry", cx);
         window.render_frame(cx);

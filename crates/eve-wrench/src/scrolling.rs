@@ -237,7 +237,9 @@ pub(crate) mod tests {
         let bounds = scroll.viewport_bounds();
         assert!(
             scroll.content_size().height - bounds.size.height > px(30.),
-            "scroll region must be constrained by its viewport"
+            "scroll region must be constrained by its viewport: content={:?}, viewport={:?}",
+            scroll.content_size(),
+            bounds
         );
         let position = bounds.center();
         window.dispatch_event(

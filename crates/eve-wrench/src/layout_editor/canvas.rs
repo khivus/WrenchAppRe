@@ -268,9 +268,9 @@ impl LayoutEditor {
             .is_likely_visible_in_draft(window, &self.windows, &self.saved)
     }
 
-    fn preview_rect(&self, key: &str, mut rect: WindowRect, mapping: Mapping) -> WindowRect {
+    fn preview_rect(&self, key: &str, mut rect: WindowRect, _mapping: Mapping) -> WindowRect {
         if self.activity.collapsed.contains(key) {
-            rect.height = ((TITLE_HEIGHT + 2.) / mapping.scale).round().max(1.) as i64;
+            rect.height = (TITLE_HEIGHT + 2.) as i64;
         }
         rect
     }
@@ -330,7 +330,7 @@ impl LayoutEditor {
         let mut bounds = mapping.rect(&state.rect.expect("windows on the canvas have a rect"));
         let collapsed = self.activity.collapsed.contains(&state.key);
         if collapsed {
-            bounds.size.height = px(TITLE_HEIGHT + 2.);
+            bounds.size.height = px((TITLE_HEIGHT + 2.) * mapping.scale);
         }
         let name = self.preview_name(state);
         let dims = state
@@ -385,7 +385,7 @@ impl LayoutEditor {
             .child(
                 h_flex()
                     .flex_none()
-                    .h(px(TITLE_HEIGHT))
+                    .h(px(TITLE_HEIGHT * mapping.scale))
                     .gap_1()
                     .px_1p5()
                     // Compact windows have no header bar in game
@@ -396,15 +396,15 @@ impl LayoutEditor {
                     } else {
                         theme.muted.opacity(0.9)
                     })
-                    .text_size(px(10.))
+                    .text_size(px(11. * mapping.scale))
                     .text_color(if selected {
                         theme.foreground
                     } else {
                         theme.muted_foreground
                     })
-                    .child(Icon::new(model::icon(state)).size(px(10.)))
+                    .child(Icon::new(model::icon(state)).size(px(11. * mapping.scale)))
                     .when(state.locked, |this| {
-                        this.child(Icon::new(IconName::Lock).size(px(9.)))
+                        this.child(Icon::new(IconName::Lock).size(px(10. * mapping.scale)))
                     })
                     .child(div().min_w_0().truncate().child(name)),
             )
@@ -420,7 +420,7 @@ impl LayoutEditor {
                         .absolute()
                         .bottom(px(3.))
                         .right(px(3.))
-                        .text_size(px(10.))
+                        .text_size(px(11. * mapping.scale))
                         .text_color(muted)
                         .child(dims),
                 )
@@ -569,24 +569,27 @@ impl LayoutEditor {
                         let view = cx.entity().downgrade();
                         let selected = self.scene;
                         move |menu, _, _| {
-                            Scene::ALL.into_iter().fold(menu, |menu, scene| {
-                                let view = view.clone();
-                                menu.item(
-                                    PopupMenuItem::new(
-                                        t!(format!("display.scenes.{}", scene.id())).to_string(),
+                            [Scene::Space, Scene::Station, Scene::Citadel]
+                                .into_iter()
+                                .fold(menu, |menu, scene| {
+                                    let view = view.clone();
+                                    menu.item(
+                                        PopupMenuItem::new(
+                                            t!(format!("display.scenes.{}", scene.id()))
+                                                .to_string(),
+                                        )
+                                        .checked(scene == selected)
+                                        .on_click(
+                                            move |_, _, cx| {
+                                                view.update(cx, |this, cx| {
+                                                    this.scene = scene;
+                                                    cx.notify();
+                                                })
+                                                .ok();
+                                            },
+                                        ),
                                     )
-                                    .checked(scene == selected)
-                                    .on_click(
-                                        move |_, _, cx| {
-                                            view.update(cx, |this, cx| {
-                                                this.scene = scene;
-                                                cx.notify();
-                                            })
-                                            .ok();
-                                        },
-                                    ),
-                                )
-                            })
+                                })
                         }
                     }),
             )
@@ -605,58 +608,112 @@ impl LayoutEditor {
                     })),
             )
             .child(
-                Button::new("visible-windows-only")
-                    .ghost()
-                    .xsmall()
-                    .icon(if !self.show_all_windows {
-                        IconName::Eye
-                    } else {
-                        IconName::EyeOff
-                    })
-                    .label(t!("layoutEditor.visibleWindowsOnly").to_string())
-                    .tooltip(t!("layoutEditor.visibleWindowsOnlyHint").to_string())
-                    .selected(!self.show_all_windows)
-                    .toggled(!self.show_all_windows)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_all_windows = !this.show_all_windows;
-                        cx.notify();
-                    })),
-            )
-            .child(
                 Button::new("layout-targets")
-                    .ghost()
+                    .outline()
                     .xsmall()
-                    .label(t!("display.lockedTargets").to_string())
-                    .selected(self.show_targets)
-                    .toggled(self.show_targets)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_targets = !this.show_targets;
-                        if this.show_targets
-                            && this
-                                .settings
-                                .read(cx)
-                                .doc(eve_wrench_core::SettingsKind::User)
-                                .is_none()
-                        {
-                            this.settings_open = true;
-                            this.settings.update(cx, |settings, cx| {
-                                settings.open_page(super::settings::Page::Targets, cx)
-                            });
+                    .label(format!(
+                        "{}: {}",
+                        t!("display.lockedTargets"),
+                        if self.show_targets {
+                            self.preview_settings.target_count.to_string()
+                        } else {
+                            "Off".into()
                         }
-                        cx.notify();
-                    })),
+                    ))
+                    .dropdown_menu({
+                        let view = cx.entity().downgrade();
+                        let count = if self.show_targets {
+                            self.preview_settings.target_count
+                        } else {
+                            0
+                        };
+                        move |menu, _, _| {
+                            (0..=12).fold(menu, |menu, pick| {
+                                let view = view.clone();
+                                menu.item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        div()
+                                            .id(SharedString::from(format!("target-count-{pick}")))
+                                            .test_support()
+                                            .child(if pick == 0 {
+                                                "Off".into()
+                                            } else {
+                                                pick.to_string()
+                                            })
+                                    })
+                                    .checked(pick == count)
+                                    .on_click(
+                                        move |_, _, cx| {
+                                            view.update(cx, |this, cx| {
+                                                this.show_targets = pick != 0;
+                                                this.settings.update(cx, |settings, cx| {
+                                                    if pick > 0 {
+                                                        settings.target_count = pick;
+                                                    }
+                                                    settings.preview_revision =
+                                                        settings.preview_revision.wrapping_add(1);
+                                                    settings.open_page(
+                                                        super::settings::Page::Targets,
+                                                        cx,
+                                                    );
+                                                });
+                                                this.settings_open = true;
+                                                cx.notify();
+                                            })
+                                            .ok();
+                                        },
+                                    ),
+                                )
+                            })
+                        }
+                    }),
             )
             .child(
-                Button::new("layout-settings")
-                    .ghost()
+                Button::new("layout-fighters")
+                    .outline()
                     .xsmall()
-                    .label(t!("display.settings").to_string())
-                    .selected(self.settings_open)
-                    .toggled(self.settings_open)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.settings_open = !this.settings_open;
-                        cx.notify();
-                    })),
+                    .label(format!(
+                        "Fighters: {}",
+                        if self.fighter_count == 0 {
+                            "Off".into()
+                        } else {
+                            self.fighter_count.to_string()
+                        }
+                    ))
+                    .dropdown_menu({
+                        let view = cx.entity().downgrade();
+                        let count = self.fighter_count;
+                        move |menu, _, _| {
+                            [0, 3, 4, 5].into_iter().fold(menu, |menu, pick| {
+                                let view = view.clone();
+                                menu.item(
+                                    PopupMenuItem::element(move |_, _| {
+                                        div()
+                                            .id(SharedString::from(format!("fighter-count-{pick}")))
+                                            .test_support()
+                                            .child(if pick == 0 {
+                                                "Off".into()
+                                            } else {
+                                                pick.to_string()
+                                            })
+                                    })
+                                    .checked(pick == count)
+                                    .on_click(
+                                        move |_, _, cx| {
+                                            view.update(cx, |this, cx| {
+                                                this.fighter_count = pick;
+                                                this.open_settings(
+                                                    super::settings::Page::Fighters,
+                                                    cx,
+                                                );
+                                            })
+                                            .ok();
+                                        },
+                                    ),
+                                )
+                            })
+                        }
+                    }),
             )
             .child(div().w(px(1.)).h_4().mx_1().bg(chrome_border))
             .child(
@@ -735,6 +792,7 @@ impl LayoutEditor {
             .collect();
 
         let bounds_cell = self.canvas_bounds.clone();
+        let parent = cx.entity().downgrade();
         div()
             .id("layout-canvas")
             .relative()
@@ -770,10 +828,13 @@ impl LayoutEditor {
             // frame's size, so a change redraws once more
             .child(
                 canvas(
-                    move |bounds, window, _| {
+                    move |bounds, window, cx| {
                         if bounds_cell.get() != bounds {
                             bounds_cell.set(bounds);
-                            window.request_animation_frame();
+                            let parent = parent.clone();
+                            window.defer(cx, move |_, cx| {
+                                parent.update(cx, |_, cx| cx.notify()).ok();
+                            });
                         }
                     },
                     |_, _, _, _| {},

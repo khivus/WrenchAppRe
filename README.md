@@ -67,9 +67,18 @@ characters; the app enforces it.
 **Selective copy.** Everything is copied by default, but each setting group has a
 checkbox: **unchecked groups keep the target's own values.** So you can push your
 overview, window layout, and suppressed dialogs everywhere without wiping a
-character's hand-arranged module slots or typed search history. Only the groups
-you select are touched; caches, per-station state, and edit history never
-migrate, and every target is backed up first.
+character's hand-arranged module slots or typed search history. The ordinary
+sync starts with the source DAT and restores unchecked groups from the target;
+fields outside the named groups also follow the source. The cached My Contracts
+owner is removed as described below, and contract search/My Contracts filters
+keep their destination values. Automatic backups follow the app preference.
+
+**Contract owner.** EVE saves the My Contracts owner as the timestamped string
+`ui/mycontracts_filter_owner` in the character DAT. Ordinary source-to-target
+sync now removes that cached selector, including one copied by an earlier sync,
+so EVE can resolve the current character again. Market-only sync excludes contract
+filters. Exact backup restoration and whole-profile copies retain their original
+contents; they are not cross-character preference merges.
 
 **Whole profiles.** Use **Sync profile...** beside the profile selector to copy
 all accounts and characters together to a named profile on another server or
@@ -96,7 +105,7 @@ it back as the desired `settings_<name>` folder while EVE is closed.
 | Suppressed dialogs           | The "don't ask again" confirmation checkboxes                                              |
 | Audio                        | Sound levels and muted sound categories                                                    |
 | Camera & graphics            | Camera sensitivity and inertia, plus effect toggles (missiles, turrets, trails, asteroids) |
-| Market & contracts           | Market filters, the market quickbar, and saved contract searches                           |
+| Market                       | Market filters and the market quickbar                                                      |
 | Module slot layout           | HUD module arrangement and linked weapon groups (off by default)                           |
 | Window tab groups            | Which windows are grouped together into tabs                                               |
 | Search history & suggestions | Typed search history and autocomplete (off by default)                                     |
@@ -245,7 +254,7 @@ screen they were saved on. Scroll to zoom and drag the background to pan.
 
 The default view reconstructs likely visible windows from saved chat membership,
 assigned overview instances, minimized state and scanner embedding preferences.
-Collapsed windows appear as headers. **Visible windows only** is enabled by
+Collapsed windows appear as headers. **Visible windows only** in the left sidebar is enabled by
 default; turn it off to include historical dialogs, inactive tabs and old instances.
 These filters affect only the preview;
 the files do not provide an exact snapshot of a running client's visibility.
@@ -257,12 +266,12 @@ character file does not identify which account owns it.
 - Choose **In space**, **Docked in station**, or **Docked in citadel** from the
   scene dropdown. Station and citadel inventories are separated; EVE stores one
   shared lobby rectangle, so both use its saved position with the appropriate title.
-- Fighter scenes offer **Citadel control (3)**, **Carrier (4)** and
-  **Supercarrier (5)** squadron previews, using the character's saved detached
-  fighter position. These modes simulate panel geometry, not the live ship's capabilities.
-- Toggle **Locked targets** to preview target placement. In **Display settings**,
-  select the account used by this character to read and edit its anchor, horizontal
-  or vertical arrangement, and anchor lock. Target count affects only the preview.
+- The separate **Fighters** dropdown offers **Off**, **3**, **4** and **5** squadrons,
+  using the character's saved detached fighter position. This simulates panel
+  geometry, not the live ship's capabilities; docked scenes hide the fighters.
+- The **Locked targets** dropdown chooses **Off** or **1–12** targets independently.
+  Click a target, or its sidebar entry, to edit its anchor, horizontal or vertical
+  arrangement, and anchor lock. Target count affects only the preview.
 - Open, close, lock, minimize, compact mode and light background per window;
   chat stacks move as one
 - Use **Hide in preview** or the eye button in the window list to temporarily
@@ -273,8 +282,10 @@ character file does not identify which account owns it.
   Use **Show all** / **Hide all** or each category's eye button for bulk preview
   controls. A search narrows these actions to matching rows;
   searching itself leaves the canvas unchanged.
-- Open **Display settings** for overview tabs, columns, filters, colors and brackets,
-  target placement, fighter positioning, and Neocom width, side and button order.
+- Click an overview/chat window or its sidebar entry to open its settings on the
+  right. Individual overview tabs are listed under their window. Click the Neocom,
+  fighter or target preview (or its sidebar entry) to edit that element. The
+  **Window** property tab holds position, size and window-state controls.
   Column order and visibility, tab names/colors, filter presets and bracket modes
   save to the selected account. Column widths, fighter coordinates and Neocom
   settings save to the selected character. Existing button groups and unknown data
@@ -289,9 +300,9 @@ character file does not identify which account owns it.
   to stage ascending/descending sorting for **Save character**. Headers stay on one
   line and clip to the saved widths. **Use clear brackets** stages an ordinary EVE
   filter that excludes drones, wrecks and collidables, preserving existing presets.
-- Chat previews include sample messages, names and an input area. Under
-  **Display settings → Chats**, change member-list width, input height and member
-  visibility, then **Save account**. EVE shares these account settings between
+- Chat previews include sample messages, names and an input area. Select the chat
+  window, change member-list width, input height and member visibility, then
+  **Save account**. EVE shares these account settings between
   characters using the same chat window name. Stacked chats have preview tabs.
   D-scan, cargo/inventory, drones, fleet/broadcasts, watch list, selected item and
   probe-scanner windows also show sample contents. These samples are temporary.
@@ -308,6 +319,21 @@ character file does not identify which account owns it.
   returns after EVE saves new geometry when the window opens again.
 - The window list is grouped by purpose (in space, navigation, fleet and chat,
   inventory, market, character)
+
+Drag the dividers to resize the left list, canvas and property pane. The probe
+and confirmation editors, character/account tables and sync pane have draggable
+dividers too. Drag table-header edges to resize individual columns; double-click
+an edge to reset it. These widths last for the current app/editor session.
+Preview text scales with the same zoom as the rows, columns, icons and titles.
+
+**Overview filters** in the sidebar lists stored presets. **Saved overview values**
+lists every timestamp-wrapped record in the account's overview section. Choose
+one to edit its existing fields, with pages for large records. Lists can be
+reordered; unknown structures and scalar types remain intact. Ship labels include
+prefix/suffix, enabled/style flags, font size and color. Empty optional label
+fields retain the EVE default. The **Options** section provides the known general
+overview, target-range and tactical-overlay toggles. Null/empty unknown records
+are preserved rather than assigned an invented type.
 
 Log the character out before saving: the client writes its layout back on
 logout.

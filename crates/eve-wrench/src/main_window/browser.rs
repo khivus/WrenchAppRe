@@ -1,3 +1,4 @@
+use gpui_kit::base::ElementExt as _;
 use std::rc::Rc;
 
 use eve_wrench_core::{
@@ -399,10 +400,7 @@ impl MainView {
                 .child(t!("profiles.none").to_string())
                 .into_any_element();
         };
-        h_flex()
-            .flex_1()
-            .min_h_0()
-            .items_stretch()
+        gpui_kit::component::resizable::h_resizable("account-character-columns")
             .children(
                 [SettingsKind::Char, SettingsKind::User]
                     .into_iter()
@@ -413,7 +411,10 @@ impl MainView {
                             .find(|(_, section_kind, _)| *section_kind == kind)
                             .map(|(_, _, entries)| entries.as_slice())
                             .unwrap_or_default();
-                        self.render_entry_table(profile, kind, entries, data, window, cx)
+                        ui::pane(
+                            None,
+                            self.render_entry_table(profile, kind, entries, data, window, cx),
+                        )
                     }),
             )
             .into_any_element()
@@ -430,7 +431,8 @@ impl MainView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let scroll = self.table_scroll(kind.into()).handle.clone();
-        let layout = EntryTableLayout::new(kind, self.store.read(cx).config().character_columns);
+        let layout = EntryTableLayout::new(kind, self.store.read(cx).config().character_columns)
+            .with_widths(kind, &self.column_widths);
         let viewport = scroll
             .bounds()
             .size
@@ -639,15 +641,54 @@ impl MainView {
             }));
         let mut cells = vec![table::empty()];
         cells.extend(layout.fields.iter().map(|column| {
-            self.sort_control(
-                format!("sort-{}-{section_id}", column_id(*column)).into(),
-                ui::section_title(column_label(*column, kind)),
-                *column,
-                sort,
-                set_sort,
-                cx,
-            )
-            .into_any_element()
+            let width = Rc::new(std::cell::Cell::new(px(100.)));
+            let measured = width.clone();
+            let key = format!("{kind:?}-{}", column_id(*column));
+            let reset_key = key.clone();
+            div()
+                .relative()
+                .w_full()
+                .h_full()
+                .on_prepaint(move |bounds, _, _| measured.set(bounds.size.width))
+                .child(self.sort_control(
+                    format!("sort-{}-{section_id}", column_id(*column)).into(),
+                    ui::section_title(column_label(*column, kind)),
+                    *column,
+                    sort,
+                    set_sort,
+                    cx,
+                ))
+                .child(
+                    div()
+                        .id(SharedString::from(format!("column-resize-{key}")))
+                        .test_support()
+                        .absolute()
+                        .right_0()
+                        .top_0()
+                        .bottom_0()
+                        .w(px(6.))
+                        .cursor_ew_resize()
+                        .border_r_1()
+                        .border_color(cx.theme().border)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                if event.click_count == 2 {
+                                    this.column_widths.remove(&reset_key);
+                                    this.column_resize = None;
+                                } else {
+                                    this.column_resize = Some((
+                                        key.clone(),
+                                        f32::from(event.position.x),
+                                        f32::from(width.get()),
+                                    ));
+                                }
+                                cx.notify();
+                            }),
+                        ),
+                )
+                .into_any_element()
         }));
         cells.push(table::empty());
         v_flex()

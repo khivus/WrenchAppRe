@@ -61,6 +61,24 @@ impl EntryTableLayout {
             min_width,
         }
     }
+    pub fn with_widths(
+        mut self,
+        kind: SettingsKind,
+        widths: &std::collections::HashMap<String, f32>,
+    ) -> Self {
+        for (index, field) in self.fields.iter().enumerate() {
+            if let Some(width) = widths.get(&format!("{kind:?}-{}", column_id(*field))) {
+                self.columns[index + 1] = Column::fixed(px(*width));
+            }
+        }
+        self.min_width = self
+            .columns
+            .iter()
+            .map(|column| column.width().unwrap_or(px(144.)))
+            .sum::<Pixels>()
+            + px(32.);
+        self
+    }
 }
 
 pub(super) fn column_id(column: SortColumn) -> &'static str {
@@ -203,6 +221,26 @@ mod tests {
         AppContext, Bounds, SharedString, TestAppContext, WindowBounds, WindowOptions, point, px,
         size,
     };
+
+    #[gpui_kit::test]
+    fn table_column_handles_resize_and_reset_without_changing_sort(cx: &mut TestAppContext) {
+        let (handle, main, _files) = crate::main_window::editors_tests::setup(cx);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.render_frame(cx);
+            let sort = main.read(cx).character_sort;
+            let grip = window.find("column-resize-Char-id").bounds().center();
+            window.drag(grip, grip + point(px(72.), px(0.)), cx);
+            window.render_frame(cx);
+            assert!(main.read(cx).column_widths["Char-id"] >= 170.);
+            assert!(main.read(cx).character_sort == sort);
+            window.double_click("column-resize-Char-id", cx);
+            window.render_frame(cx);
+            assert!(!main.read(cx).column_widths.contains_key("Char-id"));
+            assert!(main.read(cx).character_sort == sort);
+        })
+        .unwrap();
+    }
 
     #[test]
     fn defaults_keep_ids_and_names_separate_and_extra_columns_are_optional() {
