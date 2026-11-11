@@ -16,6 +16,7 @@ mod profiles;
 mod scroll;
 mod search;
 mod settings_panel;
+mod share;
 mod targets;
 mod title_bar;
 mod updating;

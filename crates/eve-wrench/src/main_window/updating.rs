@@ -94,7 +94,7 @@ impl MainView {
         .detach();
     }
 
-    fn update_has_unsaved_edits(&self, cx: &App) -> bool {
+    pub(super) fn update_has_unsaved_edits(&self, cx: &App) -> bool {
         self.probe_editors
             .values()
             .any(|editor| editor.read(cx).is_dirty())

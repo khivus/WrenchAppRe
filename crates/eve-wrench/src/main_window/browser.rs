@@ -907,14 +907,36 @@ impl MainView {
             .xsmall()
             .icon(IconName::Ellipsis)
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, window, cx| {
-                let menu = menu.item(
-                    PopupMenuItem::new(t!("actions.createBackup").to_string())
-                        .icon(IconName::Save)
-                        .on_click(view_action(&view, {
-                            let entry = entry.clone();
-                            move |this, window, cx| this.create_backup(entry.clone(), window, cx)
-                        })),
-                );
+                let menu = menu
+                    .item(
+                        PopupMenuItem::new(t!("actions.shareSettings").to_string())
+                            .icon(IconName::Share2)
+                            .on_click(view_action(&view, {
+                                let entry = entry.clone();
+                                move |this, window, cx| {
+                                    this.share_settings(entry.clone(), window, cx)
+                                }
+                            })),
+                    )
+                    .item(
+                        PopupMenuItem::new(t!("actions.importShared").to_string())
+                            .icon(IconName::Upload)
+                            .on_click(view_action(&view, {
+                                let entry = entry.clone();
+                                move |this, window, cx| this.import_share(entry.clone(), window, cx)
+                            })),
+                    )
+                    .separator()
+                    .item(
+                        PopupMenuItem::new(t!("actions.createBackup").to_string())
+                            .icon(IconName::Save)
+                            .on_click(view_action(&view, {
+                                let entry = entry.clone();
+                                move |this, window, cx| {
+                                    this.create_backup(entry.clone(), window, cx)
+                                }
+                            })),
+                    );
 
                 let backups: Vec<BackupEntry> = data.backups_for(&entry).cloned().collect();
                 if backups.is_empty() {

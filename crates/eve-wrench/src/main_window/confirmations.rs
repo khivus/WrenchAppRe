@@ -75,15 +75,6 @@ impl Section {
     }
 }
 
-// The catalog has English and Chinese texts.
-fn language() -> &'static str {
-    if rust_i18n::locale().starts_with("zh") {
-        "zh"
-    } else {
-        "en"
-    }
-}
-
 // One dialog as the list shows it.
 struct Row {
     key: String,
@@ -317,7 +308,7 @@ impl ConfirmationsEditor {
     // cleared and restored if the file already has them.
     fn rows(&mut self) -> Rc<Vec<Row>> {
         let catalog = confirmations::catalog();
-        let language = language();
+        let language = ui::catalog_language();
         if let Some(cache) = &self.row_cache
             && Arc::ptr_eq(&cache.catalog, &catalog)
             && cache.language == language

@@ -1,65 +1,40 @@
 # Changelog
 
-## Unreleased
-
-### Fixed
-
-- Default the layout preview and list to likely visible saved windows, using chat
-  membership, current overview assignments, minimized state and scanner embedding
-  preferences instead of historical open flags alone. Show collapsed headers and
-  provide a **Visible windows only** filter without changing saved settings.
-- Keep the Confirmations tab responsive with all dialogs shown by virtualizing
-  variable-height rows and caching sorted dialog text, previews, and search data.
-  Expanded text, bulk actions, smooth scrolling, and draggable scrollbars remain available.
+## 0.9.0-preview.1
 
 ### Added
 
-- Pair layout characters with their selected/default account at startup and show
-  both selectors in the top row. Preview overview tab strips, sample object rows,
-  saved sort direction, and single-line column headings; click headers to stage sorting.
-- Add a clear-bracket filter excluding drones, wrecks and collidables, and account
-  chat controls for member-list width/visibility and input height, all saved with backups.
-- Preview sample messages/names and stacked chat tabs, plus D-scan, cargo/inventory,
-  drones, fleet broadcasts, watch list, selected-item and probe-scanner contents.
-- Cache the layout canvas during settings scrolling and render only nearby overview
-  column controls to reduce work per frame while retaining smooth scrolling/scrollbars.
-- Add separate station and citadel contexts, plus fighter previews for citadel
-  control (3 squadrons), carriers (4) and supercarriers (5).
-- Add locked-target previews with account-specific anchors, horizontal/vertical
-  wrapping and configurable sample counts. Preview Neocom width, side and buttons.
-- Add **Display settings** in the layout toolbar. Edit overview tab names/colors,
-  presets, brackets, visible columns, order and character-specific widths; edit
-  object-group/state filters, color tags, backgrounds and blinking. Configure
-  target anchors, detached fighter coordinates, and Neocom width/side/button order.
-  Account and character saves are separate, always backed up, and checked for
-  external changes. New forms use smooth scrolling and visible scrollbars.
-- Add search and bulk preview visibility controls to the layout window list:
-  show/hide all matching windows or toggle a category, without changing saved
-  settings. Search includes hidden and inactive windows and stack tabs even with
-  visibility filtering enabled. Search and global actions stay above the scrolling list.
-- Add **Reset position and size** for a window or a complete stack, with undo,
-  mandatory backups, checks for external edits, and replacement from a fully
-  written temporary file. It removes only saved geometry; flags, styles, stack
-  links and other settings are preserved. Reset saves apply to the current
-  character and do not offer whole-layout sync.
-- Add a **Hide in preview** toggle and per-window eye buttons in the layout
-  editor. Hidden previews stay listed and do not change saved EVE settings.
-- Add a **Confirmations** tab with searchable dialog text, category and suppressed
-  filters, bulk suppression controls, and optional sync to other accounts after saving.
-- Add a **Window layout** tab with a character selector, draggable/resizable window
-  previews, snapping, docked/in-space views, exact coordinates, window state controls,
-  undo/redo, and optional sync to other characters after saving.
-- Give both editors independent draggable scrollbars and smooth wheel scrolling in
-  their lists and sidebars, preserving drafts per settings file across tab changes.
-- Protect unsaved confirmation and layout edits from automatic reloads and app updates.
+- Share selected account or character settings as `.ewshare` files or compressed
+  clipboard text, with a preview of what will change before importing.
+- Share one or all probe formations and import formations as an undoable edit,
+  merging new entries without duplicating existing formations.
+- Add inline Confirmations and Window layout tabs, with searchable dialogs,
+  window geometry/state editing, stacks, snapping, undo/redo and backed-up resets.
+- Edit overview tabs, object/state filters, colors, brackets, column visibility,
+  order and widths; copy column configurations to another tab or overview window.
+- Edit saved overview records and ship labels, and configure locked targets,
+  detached fighters and Neocom width, placement and buttons.
+- Add and remove Neocom shortcuts while preserving custom definitions and groups.
 
 ### Changed
 
-- Merge upstream through `18f10f4`, including dialog data for client build 3662168,
-  while preserving fork versions, drone ordering/save modes, and the Windows portable
-  updater. Upstream's AppImage restart fix does not apply to that updater.
-- Read dialog catalog updates from upstream, with an offline bundled copy and no
-  scheduled catalog-generation workflows in this fork.
+- Keep editors in the main navigation, preserving drafts across selector changes.
+  Add resizable sidebars and table columns, smooth scrolling and visible scrollbars.
+- Reconstruct likely visible windows from saved membership, assignments and state;
+  add search and preview-only individual/category/bulk visibility controls.
+- Separate location, target-count and fighter-count preview dropdowns. Show sample
+  overview, chat, cargo, scanner and fleet contents with consistent zoom scaling.
+- Sharing follows the fork's contract-filter and item-identity boundaries; imports
+  wait for editor drafts to be saved/reset and other file operations to finish.
+
+### Fixed
+
+- Stop copying another character's cached My Contracts owner and preserve the
+  destination's other contract filters during sync and shared-settings import.
+- Align chat messages, members and cargo contents to the top and extend their
+  dividers through the complete content area.
+- Keep large confirmation lists and overview settings responsive while scrolling.
+- Preserve floating-point values exactly when serializing and importing shares.
 
 ## 0.8.0 - 2026-10-25
 

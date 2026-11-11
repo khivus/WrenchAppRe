@@ -99,6 +99,15 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Verify formatting
+        run: cargo fmt --all -- --check
+
+      - name: Verify all targets with Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run workspace tests
+        run: cargo test --workspace
+
       # Built from crates.io rather than a prebuilt mirror, since this tool
       # handles the updater signing key. --force keeps the Rust cache from
       # substituting a previously installed binary.
@@ -144,7 +153,7 @@ jobs:
         run: |
           tag="v${{ steps.version.outputs.version }}"
           if ! gh release view "$tag" > /dev/null 2>&1; then
-            flags=(--draft --title "EVE Wrench $tag" --notes "$NOTES")
+            flags=(--draft --title "$tag" --notes "$NOTES")
             if [ "${{ steps.version.outputs.prerelease }}" = "true" ]; then flags+=(--prerelease); fi
             gh release create "$tag" --target "$(git rev-parse HEAD)" "${flags[@]}" || gh release view "$tag" > /dev/null
           fi
@@ -205,6 +214,7 @@ jobs:
           mkdir -p "$name/icons"
           cp "target/${{ matrix.target }}/release/eve-wrench" "$name/"
           cp packaging/linux/eve-wrench.desktop "$name/"
+          cp LICENSE "$name/"
           cp assets/icons/32x32.png assets/icons/128x128.png "$name/icons/"
           cp assets/icons/128x128@2x.png "$name/icons/256x256.png"
           cp assets/icons/icon.svg "$name/icons/eve-wrench.svg"
@@ -300,7 +310,7 @@ jobs:
           PY
           gh release upload "v$version" latest.json --clobber
 
-  checksums:
+  verify-assets:
     needs: [publish, updater-manifest]
     if: ${{ always() && needs.publish.result == 'success' && (needs.updater-manifest.result == 'success' || needs.updater-manifest.result == 'skipped') }}
     runs-on: ubuntu-latest
@@ -311,7 +321,7 @@ jobs:
         with:
           ref: ${{ inputs.release_ref || github.sha }}
 
-      - name: Publish checksums for all release assets
+      - name: Verify all release assets
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -333,4 +343,5 @@ jobs:
             test -s "$name" || { echo "::error::Missing release asset: $name"; exit 1; }
           done
           sha256sum -- * > SHA256SUMS.txt
-          gh release upload "v$version" SHA256SUMS.txt --clobber
+          # Integrity hashes stay in the Actions log, not in the public release.
+          cat SHA256SUMS.txt

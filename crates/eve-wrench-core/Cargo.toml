@@ -4,13 +4,16 @@ description = "EVE Online settings file handling for EVE Wrench"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 dirs.workspace = true
+base64 = "0.22"
 blue-marshal = "1.0.1"
 filetime = "0.2.26"
+flate2 = "1"
 sha2 = "0.10"
 semver = "1"
 ureq = { version = "3", features = ["json"] }

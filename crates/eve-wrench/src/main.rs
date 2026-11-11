@@ -7,6 +7,7 @@ mod layout_editor;
 mod logging;
 mod main_window;
 mod scrolling;
+mod sharing;
 mod store;
 mod table;
 mod ui;
