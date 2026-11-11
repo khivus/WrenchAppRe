@@ -2,14 +2,14 @@
 
 ## Automated verification completed
 
-- Workspace tests: 168 passed (87 UI/model tests and 81 core tests); one
+- Workspace tests: 172 passed (89 UI/model tests and 83 core tests); one
   opt-in network download test remains ignored.
 - Strict Clippy for the workspace and all targets passed; formatting passed.
 - Tests cover real pointer-driven sidebar/table resizing, independent preview
   dropdowns, selection routing, optional ship-label color/font edits and
   reordering, DAT round trips, checksum preservation, backups and contract sync.
-- Live desktop inspection was not completed because the Computer Use launch
-  required approval. In-game acceptance remains unverified.
+- Verification uses headless UI interactions and layout measurements. Live desktop
+  inspection and in-game acceptance remain unverified.
 
 ## Manual checks in the app
 
@@ -61,6 +61,19 @@ Use a backed-up profile and keep EVE logged out while saving settings.
 - Edit Neocom width, side and button order, fighter position, and target anchor,
   orientation and lock. Save the owning DAT and reopen it. Changing the target
   or fighter preview count must remain a preview-only operation.
+- In Neocom, remove a saved shortcut/group and restore it from **Add Neocom
+  button**. Add a standard shortcut such as Contracts, then save and reopen the
+  character. Its icon, placement and command should work in EVE. Saved custom
+  properties and nested group contents must survive; an item already pinned
+  inside a group must not appear as an available duplicate.
+- In **Tabs & columns**, change a source tab's visible columns, order and widths,
+  then use **Copy columns to…** for a single tab, a window's tabs, and all other
+  tabs. Check that the destination columns and widths match, while its name,
+  filters, brackets, colors, assignments and sorting remain unchanged. Both
+  account and character drafts need saving; unrelated tabs must stay unchanged.
+- In chat/cargo previews, verify that the first message, member name, navigation
+  entry and item start at the top of the content area. The vertical dividers must
+  reach the chat input or cargo-capacity footer at multiple zoom levels.
 
 ## Live EVE checks
 

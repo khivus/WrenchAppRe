@@ -530,6 +530,13 @@ time:
   daysAgo: "%{n}d ago"
 
 display:
+  addNeocomButton: "Add Neocom button"
+  removeNeocomButton: "Remove this button or group from the Neocom"
+  copyColumns: "Copy columns to…"
+  copyColumnsHint: "Copy visible columns, their order and widths. Keep destination filters, tab name, colors and sorting."
+  allOtherOverviewTabs: "All other overview tabs"
+  overviewWindowColumns: "Overview %{number} · all tabs"
+  columnsCopied: "Copied columns to %{count} tab(s). Save account and character to apply."
   accountSaved: "Account settings saved with a backup."
   characterSaved: "Character settings saved with a backup."
   stationServices: "Station services"

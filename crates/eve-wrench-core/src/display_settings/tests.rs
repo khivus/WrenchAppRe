@@ -5,6 +5,154 @@ use crate::window_layout::WindowState;
 struct Fixture(PathBuf);
 
 #[test]
+fn neocom_add_remove_restore_preserves_saved_objects_and_rejects_duplicates() {
+    let file = Fixture::new("char", true);
+    let (mut root, crc) = crate::marshal::load_settings_json(&file.0).unwrap();
+    let button = |id: &str| {
+        json!({"instance": {"class": "utillib.KeyVal", "state": {
+            "bytes:id": format!("bytes:{id}"), "bytes:children": null, "bytes:btnType": 1,
+            "bytes:iconPath": "bytes:custom/icon.png", "bytes:future": "utf8:preserve"
+        }}})
+    };
+    let wallet = button("wallet");
+    let market = button("market");
+    root["bytes:ui"]["bytes:neocomButtonRawData"] = json!({"tuple": ["long:17", [wallet.clone()]]});
+    root["bytes:ui"]["bytes:neocomButtonRawDataOriginal"] =
+        json!({"tuple": ["long:18", [market.clone()]]});
+    fs::write(&file.0, encode_settings_json(&root, crc).unwrap()).unwrap();
+    let original = fs::read(&file.0).unwrap();
+    let mut doc = SettingsDocument::load(&file.0).unwrap();
+    assert!(
+        !neocom::available(&doc, &[])
+            .iter()
+            .any(|(id, _, _)| id == "wallet")
+    );
+    let removed = neocom::remove(&mut doc, 0).unwrap();
+    assert_eq!(removed, wallet);
+    neocom::add(&mut doc, "wallet", &[removed]).unwrap();
+    assert!(!doc.is_dirty());
+    neocom::add(&mut doc, "market", &[]).unwrap();
+    neocom::add(&mut doc, "contracts", &[]).unwrap();
+    assert!(neocom::add(&mut doc, "wallet", &[]).is_err());
+    assert!(neocom::add(&mut doc, "unsupported-command", &[]).is_err());
+    assert!(neocom::remove(&mut doc, 99).is_err());
+    let (doc, backup) = doc.save().unwrap();
+    assert_eq!(fs::read(backup.unwrap()).unwrap(), original);
+    let buttons = doc.value("ui", "neocomButtonRawData").unwrap();
+    assert_eq!(buttons[0], wallet);
+    assert_eq!(buttons[1], market);
+    assert_eq!(neocom::id(&buttons[2]), Some("contracts"));
+    assert_eq!(
+        doc.value("ui", "neocomButtonRawDataOriginal"),
+        Some(&json!([market]))
+    );
+    let decoded = blue_marshal::decode(&fs::read(&file.0).unwrap()).unwrap();
+    assert!(decoded.had_crc);
+
+    // A nested shortcut counts as pinned. Restoring a removed group must not
+    // duplicate a child that was since added separately.
+    let group = json!({"instance": {"class": "utillib.KeyVal", "state": {
+        "bytes:id": "utf8:saved-group", "bytes:children": [wallet.clone()]
+    }}});
+    let mut doc = doc;
+    doc.set("ui", "neocomButtonRawData", json!([group.clone()]))
+        .unwrap();
+    assert!(neocom::add(&mut doc, "wallet", &[]).is_err());
+    let removed = neocom::remove(&mut doc, 0).unwrap();
+    neocom::add(&mut doc, "wallet", &[]).unwrap();
+    assert!(neocom::add(&mut doc, "saved-group", &[removed]).is_err());
+}
+
+#[test]
+fn overview_column_copy_is_atomic_and_copies_only_order_visibility_and_effective_widths() {
+    let user = Fixture::new("user", true);
+    let character = Fixture::new("char", false);
+    let mut account = SettingsDocument::load(&user.0).unwrap();
+    let mut char_doc = SettingsDocument::load(&character.0).unwrap();
+    let source = json!({"bytes:name":"utf8:Source", "bytes:overview":"utf8:Source filter",
+        "bytes:tabColumns":["bytes:NAME","bytes:ICON"],
+        "bytes:tabColumnOrder":["bytes:NAME","bytes:DISTANCE","bytes:ICON"], "bytes:future":7});
+    let target = json!({"bytes:name":"utf8:Target", "bytes:overview":"utf8:Target filter",
+        "bytes:bracket":"utf8:Target brackets", "bytes:color":{"tuple":[0.1,0.2,0.3]},
+        "bytes:tabColumns":["bytes:TYPE"], "bytes:tabColumnOrder":["bytes:TYPE"], "bytes:future":8});
+    account
+        .set(
+            "overview",
+            "tabsettings_new",
+            json!({"int:0":source,"int:1":target,"int:2":target}),
+        )
+        .unwrap();
+    char_doc
+        .set(
+            "ui",
+            "SortHeadersSizes",
+            json!({
+                (width_key(0)): {"bytes:NAME":233,"bytes:DISTANCE":"long:188","bytes:FUTURE":999},
+                (width_key(1)): {"bytes:NAME":480,"bytes:ANGULARVELOCITY":151},
+                (width_key(2)): {"bytes:NAME":400}, "bytes:unrelated":{"bytes:keep":42}
+            }),
+        )
+        .unwrap();
+    set_sort(&mut char_doc, 1, "DISTANCE", false).unwrap();
+    let before = account
+        .value("overview", "tabsettings_new")
+        .unwrap()
+        .clone();
+    let widths_before = char_doc.value("ui", "SortHeadersSizes").unwrap().clone();
+    let sorting = char_doc
+        .value("ui", "SortHeadersSettings2")
+        .unwrap()
+        .clone();
+    assert!(
+        copy_columns(
+            &mut account,
+            &mut char_doc,
+            "int:0",
+            &["int:1".into(), "int:999".into()]
+        )
+        .is_err()
+    );
+    assert_eq!(account.value("overview", "tabsettings_new"), Some(&before));
+    assert_eq!(
+        char_doc.value("ui", "SortHeadersSizes"),
+        Some(&widths_before)
+    );
+    assert_eq!(
+        copy_columns(
+            &mut account,
+            &mut char_doc,
+            "int:0",
+            &["int:1".into(), "int:1".into(), "int:0".into()]
+        )
+        .unwrap(),
+        1
+    );
+    let after = account.value("overview", "tabsettings_new").unwrap();
+    let mut expected = before["int:1"].clone();
+    expected["bytes:tabColumns"] = source["bytes:tabColumns"].clone();
+    expected["bytes:tabColumnOrder"] = source["bytes:tabColumnOrder"].clone();
+    assert_eq!(after["int:1"], expected);
+    assert_eq!(after["int:0"], source);
+    assert_eq!(after["int:2"], before["int:2"]);
+    assert_eq!(column_width(&char_doc, 1, "NAME"), 233);
+    assert_eq!(column_width(&char_doc, 1, "DISTANCE"), 188);
+    assert_eq!(column_width(&char_doc, 1, "ICON"), 28);
+    assert_eq!(column_width(&char_doc, 1, "ANGULARVELOCITY"), 100);
+    assert_eq!(column_width(&char_doc, 2, "NAME"), 400);
+    assert_eq!(char_doc.value("ui", "SortHeadersSettings2"), Some(&sorting));
+    let (account, _) = account.save().unwrap();
+    let (char_doc, _) = char_doc.save().unwrap();
+    assert_eq!(
+        account.value("overview", "tabsettings_new").unwrap()["int:1"],
+        expected
+    );
+    assert_eq!(
+        char_doc.value("ui", "SortHeadersSizes").unwrap()[width_key(1)]["bytes:FUTURE"],
+        999
+    );
+}
+
+#[test]
 fn extended_overview_edits_preserve_native_types_and_reject_structural_changes() {
     let file = Fixture::new("user", true);
     let (mut root, crc) = crate::marshal::load_settings_json(&file.0).unwrap();

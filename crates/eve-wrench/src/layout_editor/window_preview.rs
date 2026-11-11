@@ -344,10 +344,12 @@ impl LayoutEditor {
         if eve_wrench_core::display_settings::chat::channel(id).is_some() {
             let layout = ChatLayout::read(self.preview_settings.doc(SettingsKind::User), id);
             let messages = v_flex()
+                .id(SharedString::from(format!("chat-messages-{}", state.key)))
+                .test_support()
                 .flex_1()
                 .min_w_0()
                 .overflow_hidden()
-                .children([("[16:02] EVE System > Channel changed",0xe55b54), ("Scout One > Gate is clear.",0x68bfe4),("Example pilot > Fleet ready.",0xcccccc),("Logistics Two > Align to the station and wait for the next fleet broadcast.",0xcccccc)].map(|(message,color)|div().px(px(4.*scale)).text_color(rgb(color)).child(message)));
+                .children([("[16:02] EVE System > Channel changed",0xe55b54), ("Scout One > Gate is clear.",0x68bfe4),("Example pilot > Fleet ready.",0xcccccc),("Logistics Two > Align to the station and wait for the next fleet broadcast.",0xcccccc)].into_iter().enumerate().map(|(index,(message,color))|div().id(SharedString::from(format!("chat-message-{}-{index}", state.key))).test_support().flex_none().px(px(4.*scale)).text_color(rgb(color)).child(message)));
             let names = v_flex()
                 .id(SharedString::from(format!("chat-members-{}", state.key)))
                 .test_support()
@@ -366,7 +368,15 @@ impl LayoutEditor {
                         "♟ Industrial Four",
                     ]
                     .into_iter()
-                    .map(|name| line(name, scale)),
+                    .enumerate()
+                    .map(|(index, name)| {
+                        line(name, scale)
+                            .id(SharedString::from(format!(
+                                "chat-member-{}-{index}",
+                                state.key
+                            )))
+                            .test_support()
+                    }),
                 );
             return Some(
                 base()
@@ -376,6 +386,7 @@ impl LayoutEditor {
                         h_flex()
                             .flex_1()
                             .min_h_0()
+                            .items_stretch()
                             .overflow_hidden()
                             .child(messages)
                             .when(layout.show_members, |this| this.child(names)),
@@ -475,24 +486,52 @@ impl LayoutEditor {
                     .child(line("Search                 ▦  ☷", scale))
                     .child(
                         h_flex()
+                            .id(SharedString::from(format!("inventory-body-{}", state.key)))
+                            .test_support()
                             .flex_1()
                             .min_h_0()
+                            .items_stretch()
                             .overflow_hidden()
                             .child(
                                 v_flex()
+                                    .id(SharedString::from(format!(
+                                        "inventory-navigation-{}",
+                                        state.key
+                                    )))
+                                    .test_support()
                                     .w(px(110. * scale))
                                     .flex_none()
                                     .border_r_1()
                                     .border_color(cx.theme().border)
-                                    .child(line("▾ Active ship", scale))
+                                    .child(
+                                        line("▾ Active ship", scale)
+                                            .id(SharedString::from(format!(
+                                                "inventory-navigation-first-{}",
+                                                state.key
+                                            )))
+                                            .test_support(),
+                                    )
                                     .child(line("   Cargo hold", scale))
                                     .child(line("   Drone bay", scale))
                                     .child(line("   Item hangar", scale)),
                             )
                             .child(
                                 v_flex()
+                                    .id(SharedString::from(format!(
+                                        "inventory-items-{}",
+                                        state.key
+                                    )))
+                                    .test_support()
+                                    .flex_1()
                                     .min_w_0()
-                                    .child(line("▧ Nanite Repair Paste ×100", scale))
+                                    .child(
+                                        line("▧ Nanite Repair Paste ×100", scale)
+                                            .id(SharedString::from(format!(
+                                                "inventory-item-first-{}",
+                                                state.key
+                                            )))
+                                            .test_support(),
+                                    )
                                     .child(line("▧ Liquid Ozone ×550", scale))
                                     .child(line("▧ Cap Booster 800 ×20", scale)),
                             ),

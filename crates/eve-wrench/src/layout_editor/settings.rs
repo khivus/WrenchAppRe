@@ -6,7 +6,8 @@ use crate::{
 use eve_wrench_core::{
     SettingsKind,
     display_settings::{
-        SettingsDocument, boolean, chat, integer, overview, scene::TargetLayout, text,
+        SettingsDocument, boolean, chat, integer, neocom as neocom_settings, overview,
+        scene::TargetLayout, text,
     },
     window_layout::{Neocom, NeocomSide},
 };
@@ -119,6 +120,7 @@ pub(super) struct DisplayEditor {
     selected_chat: Option<String>,
     pub(super) selected_record: Option<String>,
     pub(super) record_page: usize,
+    removed_neocom_buttons: Vec<Value>,
 }
 
 pub(super) struct DisplayChanged;
@@ -224,6 +226,7 @@ impl DisplayEditor {
             selected_chat: None,
             selected_record: None,
             record_page: 0,
+            removed_neocom_buttons: Vec::new(),
         };
         result.load(character, false, window, cx);
         let accounts = result.accounts(cx);
@@ -957,27 +960,10 @@ impl DisplayEditor {
             .iter()
             .enumerate()
             .map(|(i, button)| {
-                let id = button
-                    .get("instance")
-                    .and_then(|v| v.get("state"))
-                    .and_then(|v| v.get("bytes:id"))
-                    .and_then(text)
-                    .unwrap_or("?");
-                let custom = button
-                    .get("instance")
-                    .and_then(|v| v.get("state"))
-                    .and_then(|v| v.get("bytes:label"))
-                    .and_then(text)
-                    .filter(|s| !s.starts_with("UI/"));
+                let label = neocom_settings::label(button);
                 h_flex()
                     .gap_2()
-                    .child(
-                        div().flex_1().text_sm().child(
-                            custom
-                                .map(str::to_owned)
-                                .unwrap_or_else(|| super::model::window_name(id)),
-                        ),
-                    )
+                    .child(div().flex_1().text_sm().child(label))
                     .child(
                         Button::new(SharedString::from(format!("neocom-up-{i}")))
                             .ghost()
@@ -996,6 +982,16 @@ impl DisplayEditor {
                             .disabled(i + 1 >= buttons.len())
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.move_button(i, 1, cx)),
+                            ),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("neocom-remove-{i}")))
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::Trash)
+                            .tooltip(t!("display.removeNeocomButton").to_string())
+                            .on_click(
+                                cx.listener(move |this, _, _, cx| this.remove_neocom_button(i, cx)),
                             ),
                     )
             })
@@ -1047,7 +1043,84 @@ impl DisplayEditor {
                 None,
                 cx,
             ))
+            .child(self.neocom_add_menu(cx))
             .children(rows)
+            .into_any_element()
+    }
+    fn remove_neocom_button(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.status = None;
+        match self
+            .doc_mut(SettingsKind::Char)
+            .and_then(|doc| neocom_settings::remove(doc, index))
+        {
+            Ok(button) => {
+                self.removed_neocom_buttons.push(button);
+                self.error = None;
+            }
+            Err(error) => self.error = Some(error),
+        }
+        cx.emit(DisplayChanged);
+        cx.notify();
+    }
+    fn neocom_add_menu(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut choices = self
+            .doc(SettingsKind::Char)
+            .map(|doc| neocom_settings::available(doc, &self.removed_neocom_buttons))
+            .unwrap_or_default();
+        choices.sort_by_cached_key(|(id, label, _)| {
+            (
+                !self
+                    .removed_neocom_buttons
+                    .iter()
+                    .any(|button| neocom_settings::id(button) == Some(id.as_str())),
+                label.to_lowercase(),
+            )
+        });
+        let count = self
+            .doc(SettingsKind::Char)
+            .and_then(|d| d.value("ui", "neocomButtonRawData"))
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        let view = cx.entity().downgrade();
+        Button::new("neocom-add")
+            .outline()
+            .small()
+            .w_full()
+            .icon(IconName::Plus)
+            .label(t!("display.addNeocomButton").to_string())
+            .disabled(choices.is_empty() || count >= 100)
+            .dropdown_menu(move |menu, _, _| {
+                choices.iter().fold(
+                    menu.max_h(px(320.)).scrollable(true),
+                    |menu, (id, label, _)| {
+                        let id = id.clone();
+                        let item_id = id.clone();
+                        let label = label.clone();
+                        let view = view.clone();
+                        menu.item(
+                            PopupMenuItem::element(move |_, _| {
+                                div()
+                                    .id(SharedString::from(format!("neocom-add-{item_id}")))
+                                    .test_support()
+                                    .child(label.clone())
+                            })
+                            .on_click(move |_, _, cx| {
+                                view.update(cx, |this, cx| {
+                                    let removed = this.removed_neocom_buttons.clone();
+                                    this.error = this
+                                        .doc_mut(SettingsKind::Char)
+                                        .and_then(|doc| neocom_settings::add(doc, &id, &removed))
+                                        .err();
+                                    this.status = None;
+                                    cx.emit(DisplayChanged);
+                                    cx.notify();
+                                })
+                                .ok();
+                            }),
+                        )
+                    },
+                )
+            })
             .into_any_element()
     }
     fn move_button(&mut self, index: usize, delta: isize, cx: &mut Context<Self>) {

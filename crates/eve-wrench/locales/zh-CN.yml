@@ -530,6 +530,13 @@ time:
   daysAgo: "%{n}天前"
 
 display:
+  addNeocomButton: "添加 Neocom 按钮"
+  removeNeocomButton: "从 Neocom 移除此按钮或分组"
+  copyColumns: "复制列配置到…"
+  copyColumnsHint: "复制可见列、顺序和宽度。保留目标的筛选器、标签名称、颜色和排序。"
+  allOtherOverviewTabs: "其他所有总览标签"
+  overviewWindowColumns: "总览 %{number} · 所有标签"
+  columnsCopied: "已复制列配置到 %{count} 个标签。请保存账号和角色以应用。"
   accountSaved: "账号设置已保存，并已创建备份。"
   characterSaved: "角色设置已保存，并已创建备份。"
   stationServices: "空间站服务"

@@ -292,6 +292,16 @@ character file does not identify which account owns it.
   are preserved. Object-group filters are searchable; color tags and backgrounds
   can be enabled, recolored or set to blink. Built-in presets must first be stored
   in the account file before their filters can be edited here.
+- **Neocom → Add Neocom button** adds a supported standard shortcut or an available
+  saved definition. The trash button removes a shortcut/group from the draft;
+  removed saved items appear first in the Add menu for restoration during this
+  editor session. Buttons already pinned inside groups are excluded. Save character
+  applies the changes with a backup, preserving custom icons and nested data.
+- **Tabs & columns → Copy columns to…** copies visible columns, their order and
+  effective widths to another tab, every tab in an overview window, or all other
+  tabs in the selected account. Tab names, filters, brackets, colors, assignments
+  and sorting stay with the destination. Save account and Save character apply
+  the copied configuration to their respective DATs.
 - The account selector sits beside the character at the top and starts with the
   profile's selected/default account. Verify that pairing when editing another
   character; EVE does not store a character-to-account link in these files.
@@ -306,6 +316,8 @@ character file does not identify which account owns it.
   characters using the same chat window name. Stacked chats have preview tabs.
   D-scan, cargo/inventory, drones, fleet/broadcasts, watch list, selected item and
   probe-scanner windows also show sample contents. These samples are temporary.
+  Chat messages/member lists and cargo navigation/items start at the top; their
+  dividers span the complete content area above the input or capacity footer.
 - **Save account** and **Save character** apply these display edits separately,
   always creating a verified backup and refusing conflicting external changes.
   Save or reset window-layout drafts before saving character display settings.

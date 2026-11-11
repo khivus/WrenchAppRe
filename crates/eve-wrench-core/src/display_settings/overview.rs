@@ -415,6 +415,86 @@ pub fn set_width(
     doc.set("ui", "SortHeadersSizes", all)
 }
 
+/// Copy only a tab's column configuration. Account/character drafts are updated
+/// together after validation; names, filters, colors, assignments and sorting
+/// remain owned by each destination.
+pub fn copy_columns(
+    account: &mut SettingsDocument,
+    character: &mut SettingsDocument,
+    source: &str,
+    destinations: &[String],
+) -> Result<usize, String> {
+    let tabs = tabs(account);
+    let source_tab = tabs
+        .iter()
+        .find(|tab| tab.key == source)
+        .ok_or("Source overview tab no longer exists")?;
+    let raw = account
+        .value("overview", "tabsettings_new")
+        .and_then(|v| v.get(source))
+        .ok_or("No source column configuration")?;
+    let order = raw.get("bytes:tabColumnOrder").cloned().unwrap_or_else(|| {
+        json!(
+            source_tab
+                .columns
+                .iter()
+                .map(|c| format!("bytes:{c}"))
+                .collect::<Vec<_>>()
+        )
+    });
+    let shown = raw.get("bytes:tabColumns").cloned().unwrap_or_else(|| {
+        json!(
+            DEFAULT_COLUMNS
+                .iter()
+                .map(|c| format!("bytes:{c}"))
+                .collect::<Vec<_>>()
+        )
+    });
+    let mut widths = character
+        .value("ui", "SortHeadersSizes")
+        .and_then(|v| v.get(width_key(source_tab.id)))
+        .cloned()
+        .unwrap_or(json!({}));
+    let map = widths
+        .as_object_mut()
+        .ok_or("Unsupported source column sizes")?;
+    // Include effective defaults so old destination widths cannot leak through
+    // when the source never explicitly resized that column.
+    for (column, _, _) in COLUMNS {
+        map.entry(format!("bytes:{column}"))
+            .or_insert_with(|| json!(column_width(character, source_tab.id, column)));
+    }
+    let mut account_draft = account.clone();
+    let mut character_draft = character.clone();
+    let mut all_widths = character
+        .value("ui", "SortHeadersSizes")
+        .cloned()
+        .unwrap_or(json!({}));
+    let all = all_widths
+        .as_object_mut()
+        .ok_or("Unsupported character column sizes")?;
+    let mut copied = std::collections::HashSet::new();
+    for key in destinations {
+        if key == source || !copied.insert(key) {
+            continue;
+        }
+        let target = tabs
+            .iter()
+            .find(|tab| &tab.key == key)
+            .ok_or("Destination overview tab no longer exists")?;
+        set_tab(&mut account_draft, key, "tabColumns", shown.clone())?;
+        set_tab(&mut account_draft, key, "tabColumnOrder", order.clone())?;
+        all.insert(width_key(target.id), widths.clone());
+    }
+    if copied.is_empty() {
+        return Ok(0);
+    }
+    character_draft.set("ui", "SortHeadersSizes", all_widths)?;
+    *account = account_draft;
+    *character = character_draft;
+    Ok(copied.len())
+}
+
 pub fn color_key(style: &str, state: i64) -> String {
     format!("json:{{\"tuple\":[\"bytes:{style}\",{state}]}}")
 }

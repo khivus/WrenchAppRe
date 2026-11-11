@@ -385,6 +385,7 @@ impl DisplayEditor {
                     })),
             )
             .child(modes)
+            .child(self.copy_columns_menu(tab, cx))
             .child(hint("display.columnsHint", cx))
             .child(
                 v_flex()
@@ -423,6 +424,118 @@ impl DisplayEditor {
                         .inset_0()
                     }),
             )
+            .into_any_element()
+    }
+    fn copy_columns_to(&mut self, source: &str, targets: &[String], cx: &mut Context<Self>) {
+        self.status = None;
+        let result = (|| {
+            if self.invalid_for(SettingsKind::User) || self.invalid_for(SettingsKind::Char) {
+                return Err(t!("display.invalidValue").to_string());
+            }
+            let mut account = self.doc_mut(SettingsKind::User)?.clone();
+            let mut character = self.doc_mut(SettingsKind::Char)?.clone();
+            let count = overview::copy_columns(&mut account, &mut character, source, targets)?;
+            self.docs.insert(account.path.clone(), account);
+            self.docs.insert(character.path.clone(), character);
+            self.inputs.retain(|id, _| !id.contains("Width("));
+            Ok(count)
+        })();
+        match result {
+            Ok(count) => {
+                self.error = None;
+                self.status = Some(t!("display.columnsCopied", count = count).to_string());
+            }
+            Err(error) => self.error = Some(error),
+        }
+        cx.emit(DisplayChanged);
+        cx.notify();
+    }
+
+    fn copy_columns_menu(&self, tab: &overview::OverviewTab, cx: &mut Context<Self>) -> AnyElement {
+        let tabs = self
+            .doc(SettingsKind::User)
+            .map(overview::tabs)
+            .unwrap_or_default();
+        let mut choices = Vec::<(String, String, Vec<String>)>::new();
+        let others: Vec<_> = tabs
+            .iter()
+            .filter(|t| t.key != tab.key)
+            .map(|t| t.key.clone())
+            .collect();
+        if !others.is_empty() {
+            choices.push((
+                "all".into(),
+                t!("display.allOtherOverviewTabs").to_string(),
+                others,
+            ));
+        }
+        if let Some(doc) = self.doc(SettingsKind::User) {
+            let windows = doc
+                .value("overview", "tabsByWindowInstanceID")
+                .and_then(Value::as_array)
+                .map_or(1, Vec::len);
+            for instance in 0..windows {
+                let keys: Vec<_> = overview::assigned_tabs(doc, instance)
+                    .into_iter()
+                    .filter(|t| t.key != tab.key)
+                    .map(|t| t.key)
+                    .collect();
+                if !keys.is_empty() {
+                    choices.push((
+                        format!("window-{instance}"),
+                        t!("display.overviewWindowColumns", number = instance + 1).to_string(),
+                        keys,
+                    ));
+                }
+            }
+        }
+        for target in tabs.iter().filter(|t| t.key != tab.key) {
+            choices.push((
+                format!("tab-{}", target.id),
+                format!("{} · {}", target.id + 1, target.name),
+                vec![target.key.clone()],
+            ));
+        }
+        let unavailable = choices.is_empty()
+            || self.doc(SettingsKind::Char).is_none()
+            || self.invalid_for(SettingsKind::User)
+            || self.invalid_for(SettingsKind::Char);
+        let source = tab.key.clone();
+        let view = cx.entity().downgrade();
+        Button::new("overview-copy-columns")
+            .outline()
+            .small()
+            .w_full()
+            .icon(IconName::Copy)
+            .label(t!("display.copyColumns").to_string())
+            .tooltip(t!("display.copyColumnsHint").to_string())
+            .disabled(unavailable)
+            .dropdown_menu(move |menu, _, _| {
+                choices.iter().fold(
+                    menu.max_h(px(320.)).scrollable(true),
+                    |menu, (id, label, targets)| {
+                        let id = id.clone();
+                        let label = label.clone();
+                        let targets = targets.clone();
+                        let source = source.clone();
+                        let view = view.clone();
+                        menu.item(
+                            PopupMenuItem::element(move |_, _| {
+                                div()
+                                    .id(SharedString::from(format!("copy-columns-{id}")))
+                                    .test_support()
+                                    .child(label.clone())
+                            })
+                            .on_click(move |_, _, cx| {
+                                view.update(cx, |this, cx| {
+                                    this.copy_columns_to(&source, &targets, cx)
+                                })
+                                .ok();
+                            }),
+                        )
+                    },
+                )
+            })
             .into_any_element()
     }
     fn move_column(&mut self, key: &str, index: usize, delta: isize, cx: &mut Context<Self>) {

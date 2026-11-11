@@ -160,6 +160,130 @@ fn read(path: &str) -> Value {
 }
 
 #[gpui_kit::test]
+fn neocom_buttons_can_be_removed_restored_and_added_before_saving(cx: &mut TestAppContext) {
+    let (handle, editor, files) = setup(cx);
+    let original = read(&files.character);
+    let original_account = std::fs::read(&files.account).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("sidebar-neocom", cx);
+        window.render_frame(cx);
+        click("neocom-remove-1", window, cx);
+        window.render_frame(cx);
+        assert_eq!(
+            editor
+                .read(cx)
+                .settings
+                .read(cx)
+                .doc(SettingsKind::Char)
+                .unwrap()
+                .value("ui", "neocomButtonRawData")
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        click("neocom-add", window, cx);
+        window.render_frame(cx);
+        window.click("neocom-add-wallet", cx);
+        window.render_frame(cx);
+        let buttons = editor
+            .read(cx)
+            .settings
+            .read(cx)
+            .doc(SettingsKind::Char)
+            .unwrap()
+            .value("ui", "neocomButtonRawData")
+            .unwrap();
+        assert_eq!(
+            buttons[1],
+            original["bytes:ui"]["bytes:neocomButtonRawData"]["tuple"][1][1]
+        );
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        click("neocom-add", window, cx);
+        window.render_frame(cx);
+        assert!(window.try_find("neocom-add-wallet").is_none());
+        window.click("neocom-add-contracts", cx);
+        window.render_frame(cx);
+        window.find("preview-neocom-4");
+        assert_eq!(read(&files.character), original);
+        window.click("display-save-character", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let saved = read(&files.character);
+    let buttons = &saved["bytes:ui"]["bytes:neocomButtonRawData"]["tuple"][1];
+    assert_eq!(buttons.as_array().unwrap().len(), 3);
+    assert_eq!(
+        buttons[2]["instance"]["state"]["bytes:id"],
+        "bytes:contracts"
+    );
+    assert_eq!(
+        saved["bytes:ui"]["bytes:future"],
+        original["bytes:ui"]["bytes:future"]
+    );
+    assert_eq!(std::fs::read(&files.account).unwrap(), original_account);
+}
+
+#[gpui_kit::test]
+fn overview_column_copy_menu_targets_another_window_without_copying_its_other_settings(
+    cx: &mut TestAppContext,
+) {
+    let (handle, editor, files) = setup(cx);
+    let original_account = std::fs::read(&files.account).unwrap();
+    let original_character = std::fs::read(&files.character).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("sidebar-tab-bytes:overview-0", cx);
+        window.render_frame(cx);
+        enter(Field::Width(0, "NAME".into()), "234", window, cx);
+        click("column-up-NAME", window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        let before = editor
+            .read(cx)
+            .settings
+            .read(cx)
+            .doc(SettingsKind::User)
+            .unwrap()
+            .value("overview", "tabsettings_new")
+            .unwrap()["int:2"]
+            .clone();
+        click("overview-copy-columns", window, cx);
+        window.render_frame(cx);
+        window.click("copy-columns-window-1", cx);
+        window.render_frame(cx);
+        let settings = editor.read(cx).settings.read(cx);
+        let tabs = settings
+            .doc(SettingsKind::User)
+            .unwrap()
+            .value("overview", "tabsettings_new")
+            .unwrap();
+        let mut expected = before;
+        expected["bytes:tabColumns"] = tabs["int:0"]["bytes:tabColumns"].clone();
+        expected["bytes:tabColumnOrder"] = tabs["int:0"]["bytes:tabColumnOrder"].clone();
+        assert_eq!(tabs["int:2"], expected);
+        assert_eq!(
+            overview::column_width(settings.doc(SettingsKind::Char).unwrap(), 2, "NAME"),
+            234
+        );
+        assert_eq!(
+            overview::column_width(settings.doc(SettingsKind::Char).unwrap(), 1, "NAME"),
+            160
+        );
+        assert!(settings.pending());
+        assert!(!editor.read(cx).is_dirty());
+    })
+    .unwrap();
+    assert_eq!(std::fs::read(&files.account).unwrap(), original_account);
+    assert_eq!(std::fs::read(&files.character).unwrap(), original_character);
+}
+
+#[gpui_kit::test]
 fn configured_default_account_loads_before_opening_display_settings(cx: &mut TestAppContext) {
     let (handle, _, files) = crate::main_window::editors_tests::setup(cx);
     let editor = cx
@@ -377,6 +501,49 @@ fn preview_tabs_sample_windows_chat_dividers_and_sorting_follow_the_selected_acc
             window.find(format!("sample-content-bytes:{id}"));
         }
         window.find("chat-preview-bytes:chatchannel_local");
+        let messages = window
+            .find("chat-messages-bytes:chatchannel_local")
+            .bounds();
+        let members = window.find("chat-members-bytes:chatchannel_local").bounds();
+        let first_message = window
+            .find("chat-message-bytes:chatchannel_local-0")
+            .bounds();
+        let first_member = window
+            .find("chat-member-bytes:chatchannel_local-0")
+            .bounds();
+        assert_eq!(messages.top(), members.top());
+        assert_eq!(messages.bottom(), members.bottom());
+        assert!((first_message.top() - messages.top()).abs() < px(1.));
+        assert!((first_member.top() - members.top()).abs() < px(1.));
+        let body = window.find("inventory-body-bytes:ActiveShipCargo").bounds();
+        let nav = window
+            .find("inventory-navigation-bytes:ActiveShipCargo")
+            .bounds();
+        let items = window
+            .find("inventory-items-bytes:ActiveShipCargo")
+            .bounds();
+        assert_eq!(nav.top(), body.top());
+        assert_eq!(nav.bottom(), body.bottom());
+        assert_eq!(items.top(), body.top());
+        assert_eq!(items.bottom(), body.bottom());
+        assert!(
+            (window
+                .find("inventory-navigation-first-bytes:ActiveShipCargo")
+                .bounds()
+                .top()
+                - body.top())
+            .abs()
+                < px(1.)
+        );
+        assert!(
+            (window
+                .find("inventory-item-first-bytes:ActiveShipCargo")
+                .bounds()
+                .top()
+                - body.top())
+            .abs()
+                < px(1.)
+        );
         window.click("sidebar-overview", cx);
         window.render_frame(cx);
         window.render_frame(cx);

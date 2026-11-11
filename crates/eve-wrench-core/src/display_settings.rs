@@ -17,6 +17,7 @@ use std::{
 };
 
 pub mod chat;
+pub mod neocom;
 pub mod overview;
 pub mod scene;
 
