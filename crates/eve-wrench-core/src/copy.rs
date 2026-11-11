@@ -317,6 +317,7 @@ fn copy_settings_impl(
         // preference. Drop it on full sync (including previously contaminated
         // destinations) so EVE resolves the logged-in character again.
         if !only_selected {
+            preserve_contract_filters(&mut result, &target_json);
             remove_contract_owner(&mut result);
         }
         if only_selected
@@ -352,6 +353,36 @@ fn remove_contract_owner(root: &mut Value) {
     }
 }
 
+fn preserve_contract_filters(result: &mut Value, target: &Value) {
+    let Some(root) = result.as_object_mut() else {
+        return;
+    };
+    let ui_key = find_section_key(root, "ui");
+    let prefixes = &["contracts_search_", "mycontracts_"];
+    let saved = target.as_object().and_then(|root| {
+        root.get(&find_section_key(root, "ui"))
+            .and_then(Value::as_object)
+    });
+    if !root.contains_key(&ui_key)
+        && !saved.is_some_and(|ui| ui.keys().any(|key| key_matches(key, prefixes)))
+    {
+        return;
+    }
+    let Some(ui) = root
+        .entry(ui_key)
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+    else {
+        return;
+    };
+    ui.retain(|key, _| !key_matches(key, prefixes));
+    if let Some(saved) = saved {
+        for (key, value) in saved.iter().filter(|(key, _)| key_matches(key, prefixes)) {
+            ui.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,6 +410,35 @@ mod tests {
         };
         assert!(!key_matches("bytes:mycontracts_filter_owner", prefixes));
         assert!(!key_matches("bytes:contracts_search_issuer", prefixes));
+    }
+
+    #[test]
+    fn full_sync_keeps_destination_contract_searches_including_absent_values() {
+        let mut empty = json!({});
+        preserve_contract_filters(&mut empty, &json!({"bytes:ui": {"bytes:unrelated": 1}}));
+        assert_eq!(empty, json!({}));
+        let mut result = json!({"bytes:ui": {
+            "bytes:contracts_search_issuer_id": {"tuple": ["long:1", 99]},
+            "bytes:contracts_search_sourceOnly": 1,
+            "bytes:mycontracts_filter_status": 2,
+            "bytes:mycontracts_filter_owner": "utf8:Source",
+            "bytes:market_keep": 7
+        }});
+        let target = json!({"bytes:ui": {
+            "bytes:contracts_search_issuer_id": {"tuple": ["long:9", null]},
+            "bytes:mycontracts_filter_status": 4,
+            "bytes:mycontracts_filter_owner": "utf8:Already wrong"
+        }});
+        preserve_contract_filters(&mut result, &target);
+        remove_contract_owner(&mut result);
+        assert_eq!(
+            result,
+            json!({"bytes:ui": {
+                "bytes:contracts_search_issuer_id": {"tuple": ["long:9", null]},
+                "bytes:mycontracts_filter_status": 4,
+                "bytes:market_keep": 7
+            }})
+        );
     }
 
     #[test]
