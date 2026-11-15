@@ -68,3 +68,9 @@ The automated checks use headless GPUI and synthetic DAT fixtures. Desktop appea
 - Drag a collapsed header: it should move using its visible header bounds while preserving the expanded width/height. Expanded-size fields remain editable in the inspector; resize handles are hidden on the collapsed preview.
 - Check undo/redo, reset/discard, Save layout and reopen the editor. The `windows/collapsedWindows` flag must persist in the character DAT with unrelated settings and expanded geometry preserved. Account settings are unaffected.
 - Repeat with a stacked chat window: stack and member aliases should share the collapse state, and expanding should restore its contents. Live EVE acceptance remains a manual check.
+
+## Collapsed header height calibration
+
+- A collapsed window now occupies 34 saved-coordinate pixels instead of 20. Drawing, movement bounds and snap targets use the same height. The title content fills the taller header.
+- With a collapsed header at Y=0 and Character Sheet at Y=36, the preview should show a 2-pixel gap before canvas scaling, matching the supplied alignment example. Check this at several zoom levels.
+- Saving or toggling collapse must keep the expanded dimensions and neighboring saved coordinates unchanged. Compare the new height in game; calibration is based on the supplied screenshots and still needs live visual confirmation.

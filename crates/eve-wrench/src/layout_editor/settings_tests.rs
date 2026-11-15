@@ -1238,3 +1238,53 @@ fn collapsed_toggle_previews_header_supports_undo_and_saves_expanded_size(cx: &m
     assert_eq!(saved.rect.unwrap().height, expanded.height);
     assert_eq!(std::fs::read(&files.account).unwrap(), original_account);
 }
+
+#[gpui_kit::test]
+fn collapsed_header_matches_saved_36_pixel_alignment_with_two_pixel_gap(cx: &mut TestAppContext) {
+    let (handle, editor, _files) = setup(cx);
+    cx.update_window(handle, |_, window, cx| {
+        editor.update(cx, |editor, cx| {
+            let mut header = editor
+                .windows
+                .iter()
+                .find(|w| w.id() == "overview")
+                .unwrap()
+                .clone();
+            header.key = "bytes:probeScannerWindow".into();
+            header.stack = None;
+            header.open = true;
+            header.minimized = false;
+            header.collapsed = Some(true);
+            let rect = header.rect.as_mut().unwrap();
+            rect.x = 100;
+            rect.y = 0;
+            rect.width = 400;
+            rect.height = 500;
+            let mut sheet = header.clone();
+            sheet.key = "bytes:charactersheet".into();
+            sheet.collapsed = Some(false);
+            sheet.rect.as_mut().unwrap().y = 36;
+            editor.windows = vec![header, sheet];
+            editor.saved = editor.windows.clone();
+            editor.show_all_windows = true;
+            cx.notify();
+        });
+        window.render_frame(cx);
+        window.render_frame(cx);
+        let header = window.find("window-bytes:probeScannerWindow").bounds();
+        let sheet = window.find("window-bytes:charactersheet").bounds();
+        let scale = editor.read(cx).mapping().scale;
+        assert!((f32::from(header.size.height) - 34. * scale).abs() < 1.01);
+        assert!((f32::from(sheet.top() - header.bottom()) - 2. * scale).abs() < 1.01);
+        assert_eq!(editor.read(cx).windows[0].rect.unwrap().height, 500);
+        assert_eq!(editor.read(cx).windows[1].rect.unwrap().y, 36);
+        let preview = editor.read(cx).preview_rect(
+            &editor.read(cx).windows[0].key,
+            editor.read(cx).windows[0].rect.unwrap(),
+            editor.read(cx).mapping(),
+        );
+        assert_eq!(preview.height, 34);
+        assert!(!editor.read(cx).is_dirty());
+    })
+    .unwrap();
+}

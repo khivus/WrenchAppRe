@@ -1000,7 +1000,7 @@ mod tests {
             }
             assert!(
                 (f32::from(window.find("window-bytes:market").bounds().size.height)
-                    - 20. * editor.read(cx).mapping().scale)
+                    - 34. * editor.read(cx).mapping().scale)
                     .abs()
                     < 1.
             );

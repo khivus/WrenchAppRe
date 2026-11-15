@@ -2,7 +2,7 @@
 
 ## Automated verification completed
 
-- Workspace tests: 200 passed (100 UI/model tests and 100 core tests); one
+- Workspace tests: 201 passed (101 UI/model tests and 100 core tests); one
   opt-in network download test remains ignored.
 - Strict Clippy for the workspace and all targets passed; formatting passed.
 - Tests cover real pointer-driven sidebar/table resizing, independent preview

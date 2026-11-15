@@ -21,6 +21,9 @@ const SNAP_DISTANCE: f32 = 8.;
 const EDGE: f32 = 6.;
 const CORNER: f32 = 10.;
 const TITLE_HEIGHT: f32 = 18.;
+// EVE's collapsed window occupies 34 logical pixels, including its frame.
+// A window at saved y=36 therefore sits two logical pixels beneath it.
+const COLLAPSED_HEIGHT: f32 = 34.;
 
 // A window being moved or resized. Keeps the state from before it started
 // and records it for undo on release, if anything changed.
@@ -274,14 +277,19 @@ impl LayoutEditor {
             .is_likely_visible_in_draft(window, &self.windows, &self.saved)
     }
 
-    fn preview_rect(&self, key: &str, mut rect: WindowRect, _mapping: Mapping) -> WindowRect {
+    pub(super) fn preview_rect(
+        &self,
+        key: &str,
+        mut rect: WindowRect,
+        _mapping: Mapping,
+    ) -> WindowRect {
         if self
             .windows
             .iter()
             .find(|w| w.key == key)
             .is_some_and(|w| w.collapsed == Some(true))
         {
-            rect.height = (TITLE_HEIGHT + 2.) as i64;
+            rect.height = COLLAPSED_HEIGHT as i64;
         }
         rect
     }
@@ -341,7 +349,7 @@ impl LayoutEditor {
         let mut bounds = mapping.rect(&state.rect.expect("windows on the canvas have a rect"));
         let collapsed = state.collapsed.unwrap_or(false);
         if collapsed {
-            bounds.size.height = px((TITLE_HEIGHT + 2.) * mapping.scale);
+            bounds.size.height = px(COLLAPSED_HEIGHT * mapping.scale);
         }
         let name = self.preview_name(state);
         let dims = state
@@ -396,7 +404,11 @@ impl LayoutEditor {
             .child(
                 h_flex()
                     .flex_none()
-                    .h(px(TITLE_HEIGHT * mapping.scale))
+                    .h(px(if collapsed {
+                        COLLAPSED_HEIGHT - 2.
+                    } else {
+                        TITLE_HEIGHT
+                    } * mapping.scale))
                     .gap_1()
                     .px_1p5()
                     // Compact windows have no header bar in game
