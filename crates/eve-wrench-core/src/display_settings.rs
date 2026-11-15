@@ -21,7 +21,7 @@ pub mod neocom;
 pub mod overview;
 pub mod scene;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SettingsDocument {
     pub path: PathBuf,
     pub kind: SettingsKind,
@@ -135,6 +135,25 @@ impl SettingsDocument {
 
     pub fn is_dirty(&self) -> bool {
         !self.changed.is_empty()
+    }
+
+    /// Apply this draft's edited records to another file of the same kind.
+    pub fn sync_edits_to(&self, path: &Path) -> Result<(), String> {
+        let mut target = Self::load(path)?;
+        if target.kind != self.kind {
+            return Err("Settings kind does not match".into());
+        }
+        for (section, key) in &self.changed {
+            target.set(
+                section,
+                key,
+                self.value(section, key)
+                    .ok_or("Missing edited setting")?
+                    .clone(),
+            )?;
+        }
+        target.save()?;
+        Ok(())
     }
 
     pub fn reset(&mut self) {

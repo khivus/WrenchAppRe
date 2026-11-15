@@ -210,7 +210,7 @@ fn neocom_buttons_can_be_removed_restored_and_added_before_saving(cx: &mut TestA
         window.render_frame(cx);
         window.find("preview-neocom-4");
         assert_eq!(read(&files.character), original);
-        window.click("display-save-character", cx);
+        window.click("layout-save", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -552,7 +552,7 @@ fn preview_tabs_sample_windows_chat_dividers_and_sorting_follow_the_selected_acc
         );
         assert_eq!(std::fs::read(&files.account).unwrap(), original_account);
         assert_eq!(std::fs::read(&files.character).unwrap(), original_char);
-        window.click("display-save-account", cx);
+        window.click("layout-save", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -568,7 +568,17 @@ fn preview_tabs_sample_windows_chat_dividers_and_sorting_follow_the_selected_acc
         read(&files.account)["bytes:ui"]["bytes:chatchannel_local_usermode"]["tuple"][1],
         false
     );
-    assert_eq!(std::fs::read(&files.character).unwrap(), original_char);
+    let saved_character =
+        eve_wrench_core::display_settings::SettingsDocument::load(&PathBuf::from(&files.character))
+            .unwrap();
+    assert_eq!(
+        overview::sort(&saved_character, 1, &["NAME".into()]),
+        Some(("NAME".into(), false))
+    );
+    assert_eq!(
+        read(&files.character)["bytes:windows"],
+        blue_marshal::to_json(&blue_marshal::decode(&original_char).unwrap().value)["bytes:windows"]
+    );
 }
 
 #[gpui_kit::test]
@@ -792,7 +802,7 @@ fn click(id: &str, window: &mut Window, cx: &mut App) {
 }
 
 #[gpui_kit::test]
-fn overview_and_character_settings_save_separately_with_backups(cx: &mut TestAppContext) {
+fn overview_and_character_settings_save_together_with_backups(cx: &mut TestAppContext) {
     let (handle, editor, files) = setup(cx);
     let original_char = std::fs::read(&files.character).unwrap();
     let original_account = std::fs::read(&files.account).unwrap();
@@ -836,11 +846,21 @@ fn overview_and_character_settings_save_separately_with_backups(cx: &mut TestApp
         window.render_frame(cx);
         window.click("state-blink-11", cx);
         window.render_frame(cx);
-        window.click("display-save-account", cx);
+        window.click("layout-save", cx);
     })
     .unwrap();
     cx.run_until_parked();
-    assert_eq!(std::fs::read(&files.character).unwrap(), original_char);
+    assert_eq!(
+        overview::column_width(
+            &eve_wrench_core::display_settings::SettingsDocument::load(&PathBuf::from(
+                &files.character
+            ))
+            .unwrap(),
+            0,
+            "NAME"
+        ),
+        240
+    );
     let account = read(&files.account);
     let tabs = &account["bytes:overview"]["bytes:tabsettings_new"]["tuple"][1];
     assert_eq!(tabs["int:0"]["bytes:name"], "utf8:Combat");
@@ -887,8 +907,11 @@ fn overview_and_character_settings_save_separately_with_backups(cx: &mut TestApp
                 .invalid_for(SettingsKind::Char)
         );
         window.render_frame(cx);
-        window.click("display-save-character", cx);
-        assert_eq!(std::fs::read(&files.character).unwrap(), original_char);
+        window.click("layout-save", cx);
+        assert_eq!(
+            read(&files.character)["bytes:ui"]["bytes:neocomWidth"]["tuple"][1],
+            48
+        );
         enter(Field::NeocomWidth, "64", window, cx);
         window.click("neocom-down-0", cx);
     })
@@ -897,7 +920,7 @@ fn overview_and_character_settings_save_separately_with_backups(cx: &mut TestApp
     cx.update_window(handle, |_, window, cx| {
         assert_eq!(editor.read(cx).desktop(cx).neocom.width, 64);
         window.render_frame(cx);
-        window.click("display-save-character", cx);
+        window.click("layout-save", cx);
     })
     .unwrap();
     cx.run_until_parked();
@@ -1150,11 +1173,7 @@ fn selecting_windows_and_overview_sections_keeps_save_controls_inside_the_editor
             click(&format!("overview-section-{section}"), window, cx);
             window.render_frame(cx);
             let bounds = window.find("layout-editor").bounds();
-            for id in [
-                "layout-save",
-                "display-save-account",
-                "display-save-character",
-            ] {
+            for id in ["layout-save", "layout-reset", "layout-undo", "layout-redo"] {
                 let button = window.find(id);
                 assert!(
                     button.visible(),
@@ -1287,4 +1306,42 @@ fn collapsed_header_matches_saved_36_pixel_alignment_with_two_pixel_gap(cx: &mut
         assert!(!editor.read(cx).is_dirty());
     })
     .unwrap();
+}
+
+#[gpui_kit::test]
+fn shared_footer_undo_redo_and_revert_include_settings(cx: &mut TestAppContext) {
+    let (handle, editor, files) = setup(cx);
+    let original = std::fs::read(&files.character).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("sidebar-neocom", cx);
+        window.render_frame(cx);
+        enter(Field::NeocomWidth, "64", window, cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.click("layout-undo", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(editor.read(cx).desktop(cx).neocom.width, 48);
+        window.render_frame(cx);
+        window.click("layout-redo", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        assert_eq!(editor.read(cx).desktop(cx).neocom.width, 64);
+        window.render_frame(cx);
+        window.click("layout-reset", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, _, cx| {
+        assert_eq!(editor.read(cx).desktop(cx).neocom.width, 48);
+    })
+    .unwrap();
+    assert_eq!(std::fs::read(&files.character).unwrap(), original);
 }

@@ -355,9 +355,10 @@ impl MainView {
                         &editor,
                         window,
                         |main, _, event: &crate::layout_editor::LayoutSaved, window, cx| {
-                            main.prompt_editor_sync(
+                            main.prompt_editor_sync_with_layout(
                                 event.path.clone(),
                                 EditorSyncKind::WindowLayout,
+                                Some(event.clone()),
                                 window,
                                 cx,
                             );
@@ -399,12 +400,35 @@ impl MainView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.prompt_editor_sync_with_layout(source, kind, None, window, cx);
+    }
+
+    pub(super) fn prompt_editor_sync_with_layout(
+        &mut self,
+        source: String,
+        kind: EditorSyncKind,
+        layout: Option<crate::layout_editor::LayoutSaved>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(data) = self.store.read(cx).data() else {
             return;
         };
         let entries: Vec<_> = data
             .entries()
-            .filter(|e| e.kind == kind.settings_kind() && e.path != source)
+            .filter(|e| {
+                if let Some(layout) = &layout {
+                    e.path != source
+                        && !layout
+                            .edits
+                            .iter()
+                            .any(|d| d.path.to_string_lossy() == e.path)
+                        && ((layout.geometry && e.kind == SettingsKind::Char)
+                            || layout.edits.iter().any(|d| d.kind == e.kind))
+                } else {
+                    e.kind == kind.settings_kind() && e.path != source
+                }
+            })
             .cloned()
             .collect();
         if entries.is_empty() {
@@ -413,6 +437,7 @@ impl MainView {
         let main = cx.entity().downgrade();
         let editor = cx.new(|_| EditorSyncDialog {
             main,
+            layout,
             source,
             kind,
             entries,
@@ -447,6 +472,7 @@ impl MainView {
         source: String,
         kind: EditorSyncKind,
         targets: Vec<String>,
+        layout: Option<crate::layout_editor::LayoutSaved>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -456,28 +482,53 @@ impl MainView {
             window,
             cx,
             move |_| {
-                let copied = match kind {
-                    EditorSyncKind::Probes => copy::copy_settings_groups(
-                        Path::new(&source),
-                        &targets,
-                        &["probes"],
-                        backup,
-                    )?,
-                    EditorSyncKind::Drones(mode) => {
-                        copy::sync_drone_groups(Path::new(&source), &targets, mode, backup)?
+                let copied = if let Some(layout) = layout {
+                    for target in &targets {
+                        let target_kind =
+                            eve_wrench_core::display_settings::SettingsDocument::load(Path::new(
+                                target,
+                            ))?
+                            .kind;
+                        if layout.geometry && target_kind == SettingsKind::Char {
+                            let count = copy::copy_settings_groups(
+                                Path::new(&source),
+                                std::slice::from_ref(target),
+                                &["windows"],
+                                backup,
+                            )?;
+                            if count != 1 {
+                                return Err(format!("Failed to sync {target}"));
+                            }
+                        }
+                        for doc in layout.edits.iter().filter(|d| d.kind == target_kind) {
+                            doc.sync_edits_to(Path::new(target))?;
+                        }
                     }
-                    EditorSyncKind::Confirmations => copy::copy_settings_groups(
-                        Path::new(&source),
-                        &targets,
-                        &["suppress"],
-                        backup,
-                    )?,
-                    EditorSyncKind::WindowLayout => copy::copy_settings_groups(
-                        Path::new(&source),
-                        &targets,
-                        &["windows"],
-                        backup,
-                    )?,
+                    targets.len()
+                } else {
+                    match kind {
+                        EditorSyncKind::Probes => copy::copy_settings_groups(
+                            Path::new(&source),
+                            &targets,
+                            &["probes"],
+                            backup,
+                        )?,
+                        EditorSyncKind::Drones(mode) => {
+                            copy::sync_drone_groups(Path::new(&source), &targets, mode, backup)?
+                        }
+                        EditorSyncKind::Confirmations => copy::copy_settings_groups(
+                            Path::new(&source),
+                            &targets,
+                            &["suppress"],
+                            backup,
+                        )?,
+                        EditorSyncKind::WindowLayout => copy::copy_settings_groups(
+                            Path::new(&source),
+                            &targets,
+                            &["windows"],
+                            backup,
+                        )?,
+                    }
                 };
                 if copied != count {
                     return Err(
@@ -504,6 +555,7 @@ struct EditorSyncDialog {
     main: WeakEntity<MainView>,
     source: String,
     kind: EditorSyncKind,
+    layout: Option<crate::layout_editor::LayoutSaved>,
     entries: Vec<SettingsEntry>,
     selected: HashSet<String>,
 }
@@ -529,7 +581,7 @@ impl Render for EditorSyncDialog {
             .child(
                 Checkbox::new("sync-all")
                     .label(if matches!(self.kind, EditorSyncKind::WindowLayout) {
-                        t!("editors.selectAllCharacters").to_string()
+                        t!("editors.selectAllSettings").to_string()
                     } else {
                         t!("editors.selectAll").to_string()
                     })
@@ -586,7 +638,7 @@ impl Render for EditorSyncDialog {
                         Button::new("sync-apply")
                             .primary()
                             .label(if matches!(self.kind, EditorSyncKind::WindowLayout) {
-                                t!("editors.syncCharacters").to_string()
+                                t!("editors.syncSelectedSettings").to_string()
                             } else {
                                 t!("editors.sync").to_string()
                             })
@@ -594,11 +646,14 @@ impl Render for EditorSyncDialog {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 let source = this.source.clone();
                                 let kind = this.kind;
+                                let layout = this.layout.clone();
                                 let targets = this.selected.iter().cloned().collect();
                                 window.close_dialog(cx);
                                 this.main
                                     .update(cx, |main, cx| {
-                                        main.sync_editor_settings(source, kind, targets, window, cx)
+                                        main.sync_editor_settings(
+                                            source, kind, targets, layout, window, cx,
+                                        )
                                     })
                                     .ok();
                             })),

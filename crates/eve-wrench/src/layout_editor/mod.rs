@@ -49,8 +49,11 @@ pub fn embedded(path: String, window: &mut Window, cx: &mut App) -> Entity<Layou
     cx.new(|cx| LayoutEditor::new(PathBuf::from(path), window, cx))
 }
 
+#[derive(Clone)]
 pub struct LayoutSaved {
     pub path: String,
+    pub geometry: bool,
+    pub edits: Vec<eve_wrench_core::display_settings::SettingsDocument>,
 }
 impl EventEmitter<LayoutSaved> for LayoutEditor {}
 
@@ -149,6 +152,8 @@ pub struct LayoutEditor {
     settings: Entity<settings::DisplayEditor>,
     settings_open: bool,
     settings_pending: bool,
+    settings_docs:
+        std::collections::HashMap<PathBuf, eve_wrench_core::display_settings::SettingsDocument>,
     settings_revision: u64,
     preview_settings: settings::PreviewSettings,
     canvas_preview: Option<Entity<canvas_cache::CanvasPreview>>,
@@ -205,7 +210,18 @@ impl LayoutEditor {
         subscriptions.push(cx.subscribe(
             &settings,
             |this, settings, _: &settings::DisplayChanged, cx| {
+                let docs = &settings.read(cx).docs;
+                if !this.saving
+                    && docs.iter().any(|(path, doc)| {
+                        this.settings_docs
+                            .get(path)
+                            .is_some_and(|old| old != doc && (doc.is_dirty() || old.is_dirty()))
+                    })
+                {
+                    this.history.record(this.snapshot(), None);
+                }
                 this.settings_pending = settings.read(cx).pending();
+                this.settings_docs = settings.read(cx).docs.clone();
                 if this.settings_revision != settings.read(cx).preview_revision {
                     this.settings_revision = settings.read(cx).preview_revision;
                     this.preview_settings = settings.read(cx).preview();
@@ -245,6 +261,7 @@ impl LayoutEditor {
             settings,
             settings_open: false,
             settings_pending: false,
+            settings_docs: Default::default(),
             settings_revision: 0,
             preview_settings: Default::default(),
             canvas_preview: None,
@@ -279,6 +296,7 @@ impl LayoutEditor {
 
     fn snapshot(&self) -> Snapshot {
         Snapshot {
+            docs: self.settings_docs.clone(),
             windows: self.windows.clone(),
             selected: self.selected.clone(),
             geometry_resets: self.geometry_resets.clone(),
@@ -440,6 +458,9 @@ impl LayoutEditor {
 
     // An undoable change made through buttons, toggles or the canvas.
     fn edit(&mut self, window: &mut Window, cx: &mut Context<Self>, f: impl FnOnce(&mut Self)) {
+        if self.saving {
+            return;
+        }
         self.history.record(self.snapshot(), None);
         f(self);
         self.after_structural_change(window, cx);
@@ -448,6 +469,9 @@ impl LayoutEditor {
     // An undoable change typed into a field; one field's keystrokes collapse
     // into a single step and the field itself is left alone.
     fn typed_edit(&mut self, key: String, cx: &mut Context<Self>, f: impl FnOnce(&mut Self)) {
+        if self.saving {
+            return;
+        }
         let before = self.snapshot();
         f(self);
         if self.windows != before.windows {
@@ -514,6 +538,9 @@ impl LayoutEditor {
     }
 
     fn restore(&mut self, snapshot: Snapshot, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_docs = snapshot.docs.clone();
+        self.settings
+            .update(cx, |settings, cx| settings.restore_docs(snapshot.docs, cx));
         self.windows = snapshot.windows;
         self.selected = snapshot.selected;
         self.geometry_resets = snapshot.geometry_resets;
@@ -521,34 +548,59 @@ impl LayoutEditor {
     }
 
     fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
         if let Some(previous) = self.history.undo(self.snapshot()) {
             self.restore(previous, window, cx);
         }
     }
 
     fn redo(&mut self, _: &Redo, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
         if let Some(next) = self.history.redo(self.snapshot()) {
             self.restore(next, window, cx);
         }
     }
 
     fn save_action(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_dirty() && !self.saving {
+        if (self.is_dirty() || self.settings_pending) && !self.saving {
             self.save(window, cx);
         }
     }
 
     fn reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
         self.edit(window, cx, |this| {
             this.windows = this.saved.clone();
             this.geometry_resets.clear();
+            for doc in this.settings_docs.values_mut() {
+                doc.reset();
+            }
         });
+        let docs = self.settings_docs.clone();
+        self.settings
+            .update(cx, |settings, cx| settings.restore_docs(docs, cx));
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saving || (self.disk_changed && !self.geometry_resets.is_empty()) {
             return;
         }
+        if !self.settings.read(cx).can_save() {
+            return;
+        }
+        let layout_dirty = self.is_dirty();
+        let docs = self.settings.read(cx).docs.clone();
+        let sync_edits: Vec<_> = docs
+            .values()
+            .filter(|doc| doc.is_dirty())
+            .cloned()
+            .collect();
         let shown = self.windows.clone();
         let neocom = self.neocom;
         let payload: Vec<WindowState> = shown
@@ -574,20 +626,45 @@ impl LayoutEditor {
         let had_resets = !resets.is_empty();
         let path = self.file_path.clone();
         self.saving = true;
+        self.settings
+            .update(cx, |settings, _| settings.saving_all = true);
         cx.notify();
 
         cx.spawn_in(window, async move |this, cx| {
             let result = cx
                 .background_spawn(async move {
-                    window_layout::write_window_layout_with_geometry_resets(
-                        &path, &payload, &resets, &expected, backup,
-                    )
+                    // Validate every settings draft before writing any file.
+                    for doc in docs.values() {
+                        doc.refresh()?;
+                    }
+                    if layout_dirty {
+                        window_layout::write_window_layout_with_geometry_resets(
+                            &path, &payload, &resets, &expected, backup,
+                        )?;
+                    }
+                    let mut saved_docs = std::collections::HashMap::new();
+                    for (path, doc) in docs {
+                        let fresh = doc.refresh()?;
+                        let saved = if fresh.is_dirty() {
+                            fresh.save()?.0
+                        } else {
+                            fresh
+                        };
+                        saved_docs.insert(path, saved);
+                    }
+                    Ok::<_, String>(saved_docs)
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
                 this.saving = false;
+                this.settings
+                    .update(cx, |settings, _| settings.saving_all = false);
                 match result {
-                    Ok(()) => {
+                    Ok(docs) => {
+                        this.settings_docs = docs.clone();
+                        this.settings
+                            .update(cx, |settings, cx| settings.restore_docs(docs, cx));
+                        this.history = History::default();
                         this.saved = shown;
                         this.geometry_resets
                             .retain(|key| !saved_resets.contains(key));
@@ -601,8 +678,10 @@ impl LayoutEditor {
                         this.store.update(cx, |store, cx| store.reload(cx));
                         // A geometry reset is local to this character; do not offer
                         // the ordinary whole-layout sync for this save.
-                        if !had_resets {
+                        if (layout_dirty && !had_resets) || !sync_edits.is_empty() {
                             cx.emit(LayoutSaved {
+                                geometry: layout_dirty && !had_resets,
+                                edits: sync_edits,
                                 path: this.file_path.to_string_lossy().into_owned(),
                             });
                         }
@@ -624,7 +703,7 @@ impl LayoutEditor {
 
 impl LayoutEditor {
     fn render_footer(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let dirty = self.is_dirty();
+        let dirty = self.is_dirty() || self.settings_pending;
         h_flex()
             .flex_none()
             .h(px(52.))
@@ -632,24 +711,6 @@ impl LayoutEditor {
             .px_4()
             .border_t_1()
             .border_color(cx.theme().border)
-            .child(
-                Button::new("layout-undo")
-                    .ghost()
-                    .small()
-                    .icon(IconName::Undo)
-                    .tooltip(t!("formationEditor.undo").to_string())
-                    .disabled(!self.history.can_undo())
-                    .on_click(cx.listener(|this, _, window, cx| this.undo(&Undo, window, cx))),
-            )
-            .child(
-                Button::new("layout-redo")
-                    .ghost()
-                    .small()
-                    .icon(IconName::Redo)
-                    .tooltip(t!("formationEditor.redo").to_string())
-                    .disabled(!self.history.can_redo())
-                    .on_click(cx.listener(|this, _, window, cx| this.redo(&Redo, window, cx))),
-            )
             .when(dirty, |this| {
                 this.child(
                     h_flex()
@@ -669,6 +730,24 @@ impl LayoutEditor {
                     .child(t!("layoutEditor.closeClient").to_string()),
             )
             .child(
+                Button::new("layout-undo")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Undo)
+                    .tooltip(t!("formationEditor.undo").to_string())
+                    .disabled(self.saving || !self.history.can_undo())
+                    .on_click(cx.listener(|this, _, window, cx| this.undo(&Undo, window, cx))),
+            )
+            .child(
+                Button::new("layout-redo")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Redo)
+                    .tooltip(t!("formationEditor.redo").to_string())
+                    .disabled(self.saving || !self.history.can_redo())
+                    .on_click(cx.listener(|this, _, window, cx| this.redo(&Redo, window, cx))),
+            )
+            .child(
                 Button::new("layout-reset")
                     .outline()
                     .small()
@@ -685,6 +764,7 @@ impl LayoutEditor {
                     .loading(self.saving)
                     .disabled(
                         self.saving
+                            || !self.settings.read(cx).can_save()
                             || !dirty
                             || (self.disk_changed && !self.geometry_resets.is_empty()),
                     )

@@ -18,7 +18,7 @@ The automated checks use headless GPUI and synthetic DAT fixtures. Desktop appea
 ## Ship labels and tab placement
 
 - In Overview → Ships, use an account with saved shipLabels. Toggle visibility, bold, italic and underline; edit existing prefixes, suffixes and font sizes; choose/reset custom colors. Move components up and down. The local label sample should follow saved order and line breaks. Unknown fields should survive saving. Accounts without saved labels explain that the initial configuration must be created in EVE and reloaded.
-- In Overview → Tabs & columns, choose the destination saved overview window. The tab should disappear from its previous window and appear at the destination. Move it left/right and check preview order, names, filters, widths and sorting remain attached to the same tab. Save account, reload, and confirm placement/order persist. This editor moves tabs among existing saved window instances; it does not create a new overview window or its character geometry.
+- In Overview → Tabs & columns, choose the destination saved overview window. The tab should disappear from its previous window and appear at the destination. Move it left/right and check preview order, names, filters, widths and sorting remain attached to the same tab. Save, reopen, and confirm placement/order persist. This editor moves tabs among existing saved window instances; it does not create a new overview window or its character geometry.
 - Log into EVE and check tab placement/order and bracket labels. If checking labels for unselected objects, enable the existing Always Show Bracket Text option and restart the client as required. Client acceptance of externally reordered tabs remains a manual check.
 
 ## Neocom, settings and sync
@@ -26,7 +26,8 @@ The automated checks use headless GPUI and synthetic DAT fixtures. Desktop appea
 - Open Neocom → Add button. Try supported shortcuts (for example Wallet, Market, Fitting, Mail, Fleet, Contracts or The Agency) and any saved definitions. Already pinned items should be excluded. Remove/restore an item and reorder items; custom icons and nested saved groups should survive. The catalog is conservative and does not claim to list every EVE command.
 - Open the settings popover in a short app window and scroll to its bottom. The complete version string and update button should remain reachable. Check folder selection, backup toggle, language, import/export, bracket text and theme controls.
 - Confirm Force D-scan to 14.4 AU when syncing account settings is initially off and persists after restarting the app. With it off, sync retains ordinary copy behavior. With it on, sync account settings to multiple destination accounts, then inspect D-scan in EVE: each destination should display maximum range (14.4 AU). Character-only sync must be unaffected. This preference changes normal account sync destinations; it does not immediately rewrite all profiles or the source account.
-- Save account and character edits separately, reload both, and check verified backups and unrelated preferences. Recheck geometry undo/redo, window stacks, chat settings, target/fighter previews, and selective sync exclusions.
+- Change an overview setting and move a window, then use the single bottom Save button. Reopen and verify both changes persisted, backups exist, and unrelated preferences survive. Check Undo/Redo reverses mixed geometry and display edits in order; Revert restores both kinds of draft. Invalid settings must disable Save. Recheck window stacks, chat settings, target/fighter previews, and selective sync exclusions.
+- With saved Fleet chat open, verify it appears even when the persistent chat channel list omits Fleet. Check standalone and stacked chat previews, closed/minimized windows, and preview visibility toggles. Live fleet membership is not available to this offline editor.
 
 ## Follow-up: privacy, pinned controls and simulated grid
 
@@ -52,7 +53,7 @@ The automated checks use headless GPUI and synthetic DAT fixtures. Desktop appea
 ## Supported content, chat dividers and docked bookmarks
 
 - D-scan, fleet, watchlist, cargo/inventory, drones, probe scanner and selected-item windows retain editable geometry frames but no longer display fabricated internal content. Overview, chat, target, fighter and Neocom previews remain where internal configuration is supported.
-- Select a chat window → Chats. Change member-column width, message-field height and member visibility; confirm the preview updates and values survive Save account / Reload. Width and visibility now use the verified `chatchannel_<channel>_userlistwidth` and `_usermode` keys. Input sizing uses `chatinputsize_chatchannel_<channel>`.
+- Select a chat window → Chats. Change member-column width, message-field height and member visibility; confirm the preview updates and values survive Save / reopen. Width and visibility now use the verified `chatchannel_<channel>_userlistwidth` and `_usermode` keys. Input sizing uses `chatinputsize_chatchannel_<channel>`.
 - Chat members should occupy the full right side. The bottom message field belongs only beneath the messages, not beneath the member list. Check small windows and hidden-member-list mode for clipping.
 - Switch to Station and Citadel scenes: the in-space standalone bookmarks window should disappear; the ordinary Locations window remains allowed. Return to Space to see bookmarks again.
 - Select multiple windows and all Overview sections, scroll long content, switch Window / element properties, and resize the app. Layout Save and account/character Save controls must remain within the editor. The resizable columns now occupy only the area above the fixed layout footer.
@@ -74,3 +75,8 @@ The automated checks use headless GPUI and synthetic DAT fixtures. Desktop appea
 - A collapsed window now occupies 34 saved-coordinate pixels instead of 20. Drawing, movement bounds and snap targets use the same height. The title content fills the taller header.
 - With a collapsed header at Y=0 and Character Sheet at Y=36, the preview should show a 2-pixel gap before canvas scaling, matching the supplied alignment example. Check this at several zoom levels.
 - Saving or toggling collapse must keep the expanded dimensions and neighboring saved coordinates unchanged. Compare the new height in game; calibration is based on the supplied screenshots and still needs live visual confirmation.
+
+## Sync after Save
+
+- Edit overview/account settings and character display settings, then Save. A single sync prompt should list matching other accounts and characters, labelled by type. Select targets and apply; edited records should copy to the matching file type with backups, preserving unrelated preferences. Cancel should leave targets untouched.
+- Save geometry only: offer other characters. Save account settings only: offer other accounts. Save character display settings only: offer other characters. Geometry resets remain local; other display edits saved alongside a reset may still be synced.

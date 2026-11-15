@@ -94,9 +94,10 @@ pub(super) struct DisplayEditor {
     store: Entity<Store>,
     pub(super) character: PathBuf,
     pub(super) account: Option<PathBuf>,
-    docs: HashMap<PathBuf, SettingsDocument>,
+    pub(super) docs: HashMap<PathBuf, SettingsDocument>,
     loading: HashSet<PathBuf>,
     saving: HashSet<PathBuf>,
+    pub(super) saving_all: bool,
     error: Option<String>,
     status: Option<String>,
     page: Page,
@@ -203,6 +204,7 @@ impl DisplayEditor {
             docs: HashMap::new(),
             loading: HashSet::new(),
             saving: HashSet::new(),
+            saving_all: false,
             error: None,
             status: None,
             page: Page::Overview,
@@ -261,7 +263,7 @@ impl DisplayEditor {
             .path(kind)
             .cloned()
             .ok_or_else(|| t!("display.chooseAccount").to_string())?;
-        if self.loading.contains(&path) || self.saving.contains(&path) {
+        if self.saving_all || self.loading.contains(&path) || self.saving.contains(&path) {
             return Err(t!("display.busy").to_string());
         }
         self.preview_revision = self.preview_revision.wrapping_add(1);
@@ -378,7 +380,7 @@ impl DisplayEditor {
         cx.notify();
     }
     fn load(&mut self, path: PathBuf, discard: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.loading.contains(&path) || self.saving.contains(&path) {
+        if self.saving_all || self.loading.contains(&path) || self.saving.contains(&path) {
             return;
         }
         let old = if discard {
@@ -422,56 +424,24 @@ impl DisplayEditor {
         })
         .detach();
     }
-    fn save(&mut self, kind: SettingsKind, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(path) = self.path(kind).cloned() else {
-            return;
-        };
-        if self.loading.contains(&path)
-            || self.saving.contains(&path)
-            || self.invalid_for(kind)
-            || (kind == SettingsKind::Char && self.layout_dirty)
-        {
-            return;
-        }
-        let Some(doc) = self
-            .docs
-            .get(&path)
-            .cloned()
-            .filter(SettingsDocument::is_dirty)
-        else {
-            return;
-        };
-        self.saving.insert(path.clone());
-        self.error = None;
-        self.status = None;
+    pub(super) fn restore_docs(
+        &mut self,
+        docs: HashMap<PathBuf, SettingsDocument>,
+        cx: &mut Context<Self>,
+    ) {
+        self.docs = docs;
+        self.inputs.clear();
+        self.colors.clear();
+        self.invalid.clear();
+        self.preview_revision = self.preview_revision.wrapping_add(1);
         cx.emit(DisplayChanged);
         cx.notify();
-        cx.spawn_in(window, async move |this, cx| {
-            let result = cx.background_spawn(async move { doc.save() }).await;
-            this.update_in(cx, |this, _, cx| {
-                this.saving.remove(&path);
-                match result {
-                    Ok((doc, _)) => {
-                        this.docs.insert(path, doc);
-                        this.preview_revision = this.preview_revision.wrapping_add(1);
-                        this.status = Some(
-                            t!(if kind == SettingsKind::User {
-                                "display.accountSaved"
-                            } else {
-                                "display.characterSaved"
-                            })
-                            .to_string(),
-                        );
-                        this.store.update(cx, |store, cx| store.reload(cx));
-                    }
-                    Err(error) => this.error = Some(error),
-                }
-                cx.emit(DisplayChanged);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
+    }
+    pub(super) fn can_save(&self) -> bool {
+        !self.saving_all
+            && self.invalid.is_empty()
+            && self.loading.is_empty()
+            && self.saving.is_empty()
     }
     fn edit(
         &mut self,
@@ -1240,71 +1210,10 @@ impl Render for DisplayEditor {
         } else {
             None
         };
-        let saves = [SettingsKind::User, SettingsKind::Char]
-            .into_iter()
-            .map(|kind| {
-                let path = self.path(kind);
-                let dirty = self.doc(kind).is_some_and(SettingsDocument::is_dirty);
-                let busy =
-                    path.is_some_and(|p| self.loading.contains(p) || self.saving.contains(p));
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Button::new(if kind == SettingsKind::Char {
-                            "display-save-character"
-                        } else {
-                            "display-save-account"
-                        })
-                        .outline()
-                        .small()
-                        .flex_1()
-                        .label(
-                            if kind == SettingsKind::Char {
-                                t!("display.saveCharacter")
-                            } else {
-                                t!("display.saveAccount")
-                            }
-                            .to_string(),
-                        )
-                        .disabled(
-                            !dirty
-                                || busy
-                                || self.invalid_for(kind)
-                                || (kind == SettingsKind::Char && self.layout_dirty),
-                        )
-                        .on_click(
-                            cx.listener(move |this, _, window, cx| this.save(kind, window, cx)),
-                        ),
-                    )
-                    .child(
-                        Button::new(if kind == SettingsKind::Char {
-                            "display-reload-character"
-                        } else {
-                            "display-reload-account"
-                        })
-                        .ghost()
-                        .small()
-                        .icon(IconName::RotateCcw)
-                        .tooltip(t!("display.discardReload").to_string())
-                        .disabled(path.is_none() || busy)
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                if let Some(path) = this.path(kind).cloned() {
-                                    this.load(path, true, window, cx);
-                                }
-                            },
-                        )),
-                    )
-            })
-            .collect::<Vec<_>>();
         v_flex()
             .id("display-settings")
             .test_support()
             .overflow_hidden()
-            // These files have separate save buttons and no layout undo history.
-            .on_action(|_: &super::Undo, _, cx| cx.stop_propagation())
-            .on_action(|_: &super::Redo, _, cx| cx.stop_propagation())
-            .on_action(|_: &super::Save, _, cx| cx.stop_propagation())
             .w_full()
             .flex_1()
             .min_h_0()
@@ -1337,9 +1246,6 @@ impl Render for DisplayEditor {
                     .gap_2()
                     .border_t_1()
                     .border_color(cx.theme().border)
-                    .when(self.layout_dirty, |this| {
-                        this.child(hint("display.saveLayoutFirst", cx))
-                    })
                     .when_some(self.error.clone(), |this, error| {
                         this.child(
                             div()
@@ -1353,9 +1259,7 @@ impl Render for DisplayEditor {
                     })
                     .when_some(self.status.clone(), |this, status| {
                         this.child(div().text_xs().text_color(cx.theme().primary).child(status))
-                    })
-                    .child(hint("display.saveHint", cx))
-                    .children(saves),
+                    }),
             )
     }
 }

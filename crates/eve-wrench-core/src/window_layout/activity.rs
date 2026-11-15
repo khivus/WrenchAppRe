@@ -63,6 +63,12 @@ impl WindowActivity {
                 .filter(|w| w.stack.as_deref() == Some(window.key.as_str()))
                 .any(|member| self.visible_inner(member, windows, saved, visited));
         }
+        // Fleet chat is created by fleet membership, not restored from the
+        // persistent XMPP channel list. Its saved open flag is the available
+        // offline evidence, even when that list is present and omits it.
+        if id == "chatchannel_fleet" {
+            return window.open;
+        }
         if id.starts_with("chatchannel_") {
             return self
                 .chat_windows
@@ -260,6 +266,27 @@ mod tests {
         windows[0].open = false;
         windows[2].minimized = true;
         assert!(!activity.is_likely_visible(&windows[2], &windows));
+    }
+
+    #[test]
+    fn fleet_chat_is_not_filtered_by_persistent_channel_membership() {
+        let activity = read(
+            &json!({"bytes:ui": {"bytes:chatchannels": {
+                "tuple": ["long:1", []]
+            }}}),
+            None,
+        );
+        let mut fleet = window("chatchannel_fleet");
+        assert!(activity.is_likely_visible(&fleet, &[fleet.clone()]));
+        fleet.stack = Some("bytes:1".into());
+        let stack = window("1");
+        assert!(activity.is_likely_visible(&stack, &[fleet.clone(), stack.clone()]));
+        fleet.stack = None;
+        fleet.open = false;
+        assert!(!activity.is_likely_visible(&fleet, &[fleet.clone()]));
+        fleet.open = true;
+        fleet.minimized = true;
+        assert!(!activity.is_likely_visible(&fleet, &[fleet.clone()]));
     }
 
     #[test]

@@ -299,32 +299,33 @@ character file does not identify which account owns it.
 - **Neocom → Add Neocom button** adds a supported standard shortcut or an available
   saved definition. The trash button removes a shortcut/group from the draft;
   removed saved items appear first in the Add menu for restoration during this
-  editor session. Buttons already pinned inside groups are excluded. Save character
+  editor session. Buttons already pinned inside groups are excluded. Save
   applies the changes with a backup, preserving custom icons and nested data.
 - **Tabs & columns → Copy columns to…** copies visible columns, their order and
   effective widths to another tab, every tab in an overview window, or all other
   tabs in the selected account. Tab names, filters, brackets, colors, assignments
-  and sorting stay with the destination. Save account and Save character apply
-  the copied configuration to their respective DATs.
+  and sorting stay with the destination. Save applies the copied configuration to both affected DATs.
 - The account selector sits beside the character at the top and starts with the
   profile's selected/default account. Verify that pairing when editing another
   character; EVE does not store a character-to-account link in these files.
 - Overview previews show every tab assigned to each window and five sample objects
   with the enabled fields. Click a tab to switch the preview; click a column header
-  to stage ascending/descending sorting for **Save character**. Headers stay on one
+  to stage ascending/descending sorting for **Save**. Headers stay on one
   line and clip to the saved widths. **Use clear brackets** stages an ordinary EVE
   filter that excludes drones, wrecks and collidables, preserving existing presets.
 - Chat previews include sample messages, names and an input area. Select the chat
   window, change member-list width, input height and member visibility, then
-  **Save account**. EVE shares these account settings between
+  **Save**. EVE shares these account settings between
   characters using the same chat window name. Stacked chats have preview tabs.
   D-scan, cargo/inventory, drones, fleet/broadcasts, watch list, selected item and
   probe-scanner windows also show sample contents. These samples are temporary.
   Chat messages/member lists and cargo navigation/items start at the top; their
   dividers span the complete content area above the input or capacity footer.
-- **Save account** and **Save character** apply these display edits separately,
-  always creating a verified backup and refusing conflicting external changes.
-  Save or reset window-layout drafts before saving character display settings.
+- One **Save** button applies window positions and all pending display edits,
+  creating verified backups for display settings and refusing conflicting external changes.
+  **Undo**, **Redo**, and **Revert** sit beside Save and include display edits.
+  After saving, select other characters/accounts in the sync prompt to copy the
+  saved layout and edited display records while preserving unrelated preferences.
   The canvas uses schematic fighters, targets and Neocom icons, and overview
   headers with the configured widths; it does not reproduce live objects or targets.
 - **Reset position and size** stages removal of a window's saved geometry.

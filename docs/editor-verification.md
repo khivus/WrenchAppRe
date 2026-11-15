@@ -48,8 +48,8 @@ Use a backed-up profile and keep EVE logged out while saving settings.
 - Edit overview tab names/colors, preset/bracket assignments, column order,
   visibility and widths, sorting, object groups, state filters, flag/background
   priorities, colors and blinking. Try the general **Options** toggles too.
-  Preview changes should appear where supported; Save account and Save character
-  must affect their respective DAT only, with verified backups.
+  Preview changes should appear where supported; the shared Save button
+  must save all pending changes to their owning DATs, with verified backups.
 - Expand **Overview filters** and select a preset directly. Expand **Saved
   overview values** and choose ship labels, global columns, tab assignments,
   legacy or other saved records. Check paging and list reordering; edit existing
@@ -58,7 +58,7 @@ Use a backed-up profile and keep EVE logged out while saving settings.
 - Enter an invalid width, color or tab name. Save must remain disabled until it
   is corrected or the draft is reloaded. Check that drafts survive switching
   characters/accounts and continue blocking app updates/profile replacement.
-- Edit chat member width, input height and member visibility. Save account,
+- Edit chat member width, input height and member visibility. Save,
   reopen the same channel and verify the preview; switch stacked chat tabs too.
 - Edit Neocom width, side and button order, fighter position, and target anchor,
   orientation and lock. Save the owning DAT and reopen it. Changing the target

@@ -699,3 +699,22 @@ fn chat_input_reads_native_full_window_key_and_ignores_obsolete_short_key() {
         40
     );
 }
+
+#[test]
+fn sync_edited_records_preserves_other_target_preferences_and_checks_kind() {
+    let source = Fixture::new("char", true);
+    let target = Fixture::new("char", true);
+    let account = Fixture::new("user", true);
+    let mut draft = SettingsDocument::load(&source.0).unwrap();
+    let mut destination = SettingsDocument::load(&target.0).unwrap();
+    destination.set("ui", "neocomAlign", json!(6)).unwrap();
+    destination.save().unwrap();
+    draft.set("ui", "neocomWidth", json!(64)).unwrap();
+    let original = fs::read(&target.0).unwrap();
+    draft.sync_edits_to(&target.0).unwrap();
+    let result = SettingsDocument::load(&target.0).unwrap();
+    assert_eq!(result.value("ui", "neocomWidth"), Some(&json!(64)));
+    assert_eq!(result.value("ui", "neocomAlign"), Some(&json!(6)));
+    assert!(draft.sync_edits_to(&account.0).is_err());
+    assert_ne!(fs::read(&target.0).unwrap(), original);
+}

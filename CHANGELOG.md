@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.0-preview.3
+
+### Changed
+
+- Save window positions, overview and other display settings together with one Save button.
+- Use Undo, Redo and Revert beside Save for both window layout and display edits.
+- After saving, sync edited settings to selected characters and accounts while preserving unrelated preferences.
+
+### Fixed
+
+- Show saved open Fleet chat in the preview even when it is missing from the persistent chat channel list.
+- Save the latest edit when clicking Save immediately after changing a setting.
+
+
 ## 0.9.0-preview.2
 
 ### Added

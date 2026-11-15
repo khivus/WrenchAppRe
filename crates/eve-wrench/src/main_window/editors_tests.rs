@@ -834,3 +834,60 @@ fn geometry_reset_is_undoable_backs_up_and_preserves_stack_state_without_syncing
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn saved_layout_display_edits_offer_matching_accounts_and_characters(cx: &mut TestAppContext) {
+    use eve_wrench_core::display_settings::SettingsDocument;
+    let (handle, main, files) = setup(cx);
+    let mut character = SettingsDocument::load(std::path::Path::new(&files.character)).unwrap();
+    let mut account = SettingsDocument::load(std::path::Path::new(&files.account)).unwrap();
+    character
+        .set("ui", "neocomWidth", serde_json::json!(64))
+        .unwrap();
+    account
+        .set(
+            "ui",
+            "chatinputsize_chatchannel_local",
+            serde_json::json!(40),
+        )
+        .unwrap();
+    character.clone().save().unwrap();
+    account.clone().save().unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        main.update(cx, |main, cx| {
+            main.prompt_editor_sync_with_layout(
+                files.character.clone(),
+                super::editors::EditorSyncKind::WindowLayout,
+                Some(crate::layout_editor::LayoutSaved {
+                    path: files.character.clone(),
+                    geometry: false,
+                    edits: vec![character, account],
+                }),
+                window,
+                cx,
+            )
+        });
+        window.render_frame(cx);
+        window.click("sync-all", cx);
+        window.render_frame(cx);
+        window.click("sync-apply", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let target_character =
+        SettingsDocument::load(std::path::Path::new(&files.target_character)).unwrap();
+    let target_account = SettingsDocument::load(std::path::Path::new(&files.target)).unwrap();
+    assert_eq!(
+        target_character.value("ui", "neocomWidth"),
+        Some(&serde_json::json!(64))
+    );
+    assert_eq!(
+        target_account.value("ui", "chatinputsize_chatchannel_local"),
+        Some(&serde_json::json!(40))
+    );
+    assert_eq!(
+        target_character.value("ui", "unrelated"),
+        Some(&serde_json::json!("utf8:keep"))
+    );
+    assert!(target_account.value("ui", "neocomWidth").is_none());
+}

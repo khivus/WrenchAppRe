@@ -1,41 +1,27 @@
-# v0.9.0-preview.2 verification
+# v0.9.0-preview.3 verification
 
-This prerelease includes the fork's overview/filter/ship-label editor changes,
-bounded object previews, native chat divider fixes, docked bookmark visibility,
-header-only collapsed windows and preserved Save controls.
+This prerelease combines window layout and display settings in one Save workflow,
+adds shared Undo/Redo/Revert, offers edited-setting sync to matching characters
+and accounts, and restores Fleet chat to the offline preview.
 
-## Selective upstream integration
+## Automated verification
 
-- Included upstream `58976d0`: confirmation dialogs for client build 3687575.
-- Included upstream `87001c9`: static Windows C runtime, removing the portable
-  executable's dependency on a separately installed VC++ redistributable.
-- Excluded upstream `03a098f`: drone catalog update, as requested.
-- Excluded upstream `162e49a`: upstream version bump; the fork uses its own
-  `0.9.0-preview.2` public version.
-
-## Automated release requirements
-
-The release workflow runs formatting, strict all-target Clippy and workspace
-checks on Windows, Linux, Apple Silicon macOS and Intel macOS, then packages
-and verifies the established nine release assets. Integrity hashes remain in
-Actions logs rather than the public release. Both workspace crates and the
-application display use version 0.9.0-preview.2.
+Formatting, strict all-target Clippy and workspace tests run locally and in the
+release workflow. The workflow builds Windows, Linux and both macOS architectures
+and verifies all nine established release packages before publication.
 
 ## Manual acceptance
 
-Desktop appearance and live EVE acceptance remain manual. Use a backed-up
-profile and keep EVE logged out when applying settings.
+Desktop appearance and live EVE acceptance remain unverified. With a backed-up
+profile and EVE logged out:
 
-- Follow the [overview/chat/window checklist](overview-editor-verification.md),
-  including friendly filters, subdued backgrounds, random ship names and types,
-  tab placement/order, label reordering, native chat widths/heights, collapsed
-  header alignment, docked bookmarks and Save-button visibility.
-- Check the [existing editor and sync checklist](editor-verification.md),
-  including selective sync exclusions, sharing and destination identity safety.
-- Check the new confirmation entries and preserve existing confirmation choices.
-- Start the Windows portable executable on a machine without the VC++ runtime.
-- Start each native platform package; verify the version, architecture, update
-  discovery, existing profiles and backups.
+- Change an overview setting and move a window; Save once, reopen, and confirm both.
+- Undo/Redo mixed display and geometry edits; Revert should restore both drafts.
+- Save account-only, character-only and mixed edits; check the sync prompt offers
+  matching targets, Cancel preserves targets, and applying preserves unrelated settings.
+- Check Fleet chat standalone and stacked, including closed/minimized states.
+- Follow [the overview checklist](overview-editor-verification.md) and
+  [the editor checklist](editor-verification.md) for related regressions.
+- Start each platform package and confirm version 0.9.0-preview.3.
 
-Public release notes are maintained in
-[the release body](releases/v0.9.0-preview.2.md).
+Public notes: [v0.9.0-preview.3](releases/v0.9.0-preview.3.md).

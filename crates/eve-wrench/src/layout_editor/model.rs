@@ -397,6 +397,7 @@ pub fn drag_rect(
 // The whole edit state, for undo/redo.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
+    pub docs: HashMap<std::path::PathBuf, eve_wrench_core::display_settings::SettingsDocument>,
     pub windows: Vec<WindowState>,
     pub selected: Option<String>,
     pub geometry_resets: HashSet<String>,
