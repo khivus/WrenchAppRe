@@ -755,50 +755,53 @@ impl Render for LayoutEditor {
                 .flex_1()
                 .min_h_0()
                 .child(
-                    gpui_kit::component::resizable::h_resizable("layout-columns")
-                        .child(ui::pane(Some(240.), self.render_list(cx)))
-                        .child(ui::pane(None, self.cached_canvas(cx)))
-                        .child(ui::pane(
-                            Some(392.),
-                            v_flex()
-                                .size_full()
-                                .min_h_0()
-                                .child(
-                                    h_flex()
-                                        .flex_none()
-                                        .p_2()
-                                        .gap_2()
-                                        .child(
-                                            Button::new("layout-window-properties")
-                                                .ghost()
-                                                .small()
-                                                .flex_1()
-                                                .label("Window")
-                                                .selected(!self.settings_open)
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.settings_open = false;
-                                                    cx.notify();
-                                                })),
-                                        )
-                                        .child(
-                                            Button::new("layout-element-properties")
-                                                .ghost()
-                                                .small()
-                                                .flex_1()
-                                                .label(self.settings.read(cx).page_label())
-                                                .selected(self.settings_open)
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.settings_open = true;
-                                                    cx.notify();
-                                                })),
-                                        ),
-                                )
-                                .child(if self.settings_open {
-                                    self.settings.clone().into_any_element()
-                                } else {
-                                    self.render_inspector(cx).into_any_element()
-                                }),
-                        )),
+                    div().flex_1().min_h_0().overflow_hidden().child(
+                        gpui_kit::component::resizable::h_resizable("layout-columns")
+                            .child(ui::pane(Some(240.), self.render_list(cx)))
+                            .child(ui::pane(None, self.cached_canvas(cx)))
+                            .child(ui::pane(
+                                Some(392.),
+                                v_flex()
+                                    .size_full()
+                                    .min_h_0()
+                                    .overflow_hidden()
+                                    .child(
+                                        h_flex()
+                                            .flex_none()
+                                            .p_2()
+                                            .gap_2()
+                                            .child(
+                                                Button::new("layout-window-properties")
+                                                    .ghost()
+                                                    .small()
+                                                    .flex_1()
+                                                    .label("Window")
+                                                    .selected(!self.settings_open)
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.settings_open = false;
+                                                        cx.notify();
+                                                    })),
+                                            )
+                                            .child(
+                                                Button::new("layout-element-properties")
+                                                    .ghost()
+                                                    .small()
+                                                    .flex_1()
+                                                    .label(self.settings.read(cx).page_label())
+                                                    .selected(self.settings_open)
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.settings_open = true;
+                                                        cx.notify();
+                                                    })),
+                                            ),
+                                    )
+                                    .child(if self.settings_open {
+                                        self.settings.clone().into_any_element()
+                                    } else {
+                                        self.render_inspector(cx).into_any_element()
+                                    }),
+                            )),
+                    ),
                 )
                 .child(self.render_footer(cx))
                 .into_any_element(),

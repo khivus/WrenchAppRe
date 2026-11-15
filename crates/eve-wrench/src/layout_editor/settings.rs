@@ -1300,6 +1300,7 @@ impl Render for DisplayEditor {
         v_flex()
             .id("display-settings")
             .test_support()
+            .overflow_hidden()
             // These files have separate save buttons and no layout undo history.
             .on_action(|_: &super::Undo, _, cx| cx.stop_propagation())
             .on_action(|_: &super::Redo, _, cx| cx.stop_propagation())
@@ -1340,7 +1341,15 @@ impl Render for DisplayEditor {
                         this.child(hint("display.saveLayoutFirst", cx))
                     })
                     .when_some(self.error.clone(), |this, error| {
-                        this.child(div().text_xs().text_color(cx.theme().danger).child(error))
+                        this.child(
+                            div()
+                                .text_xs()
+                                .max_h(px(48.))
+                                .overflow_hidden()
+                                .whitespace_normal()
+                                .text_color(cx.theme().danger)
+                                .child(error),
+                        )
                     })
                     .when_some(self.status.clone(), |this, status| {
                         this.child(div().text_xs().text_color(cx.theme().primary).child(status))

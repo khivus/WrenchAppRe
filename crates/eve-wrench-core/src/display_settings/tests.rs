@@ -652,3 +652,22 @@ fn native_label_reordering_preserves_unrecognized_client_fields() {
         .unwrap();
     assert_eq!(doc.value("overview", "shipLabels").unwrap()[0], labels[1]);
 }
+
+#[test]
+fn docked_scenes_hide_in_space_bookmarks_but_allow_locations() {
+    let window = |id: &str| WindowState {
+        key: format!("bytes:{id}"),
+        rect: None,
+        open: true,
+        locked: false,
+        minimized: false,
+        compact: None,
+        light_background: None,
+        stack: None,
+    };
+    for scene in [Scene::Station, Scene::Citadel] {
+        assert!(!scene.allows(&window("standaloneBookmarkWnd")));
+        assert!(scene.allows(&window("locations")));
+    }
+    assert!(Scene::Space.allows(&window("standaloneBookmarkWnd")));
+}

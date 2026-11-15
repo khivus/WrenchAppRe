@@ -1,4 +1,4 @@
-//! The XMPP window name omits the `chatchannel_` window-ID prefix. These
+//! Member dividers use the full chatchannel_ window ID; input sizing uses the channel name. These
 //! dividers belong to settings.user.ui, not the character geometry file.
 use super::{SettingsDocument, boolean, integer};
 use serde_json::{Value, json};
@@ -44,7 +44,7 @@ impl ChatLayout {
         let name = channel(window_id).unwrap_or("local");
         let value = |key: &str| doc.and_then(|d| d.value("ui", key));
         Self {
-            member_width: value(&format!("{name}_userlistwidth"))
+            member_width: value(&format!("chatchannel_{name}_userlistwidth"))
                 .and_then(integer)
                 .unwrap_or(128)
                 .clamp(50, 200),
@@ -52,7 +52,7 @@ impl ChatLayout {
                 .and_then(integer)
                 .unwrap_or(64)
                 .clamp(30, 96),
-            show_members: value(&format!("{name}_usermode"))
+            show_members: value(&format!("chatchannel_{name}_usermode"))
                 .and_then(boolean)
                 .or_else(|| value("chat_show_member_list_default").and_then(boolean))
                 .unwrap_or(true),
@@ -68,9 +68,9 @@ impl ChatLayout {
             return Err("Unsupported chat name".into());
         }
         let key = match field {
-            "members" => format!("{name}_userlistwidth"),
+            "members" => format!("chatchannel_{name}_userlistwidth"),
             "input" => format!("chatinputsize_{name}"),
-            "visible" => format!("{name}_usermode"),
+            "visible" => format!("chatchannel_{name}_usermode"),
             _ => return Err("Unsupported chat divider".into()),
         };
         let value = if field == "visible" {

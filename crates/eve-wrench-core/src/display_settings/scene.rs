@@ -61,6 +61,7 @@ impl Scene {
                     | "directionalScannerWindow"
                     | "MoonScanner"
                     | "InventorySpace"
+                    | "standaloneBookmarkWnd"
             );
         match self {
             Self::Station => !citadel && !flight,

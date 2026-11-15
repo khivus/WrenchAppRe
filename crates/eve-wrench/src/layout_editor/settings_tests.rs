@@ -498,7 +498,11 @@ fn preview_tabs_sample_windows_chat_dividers_and_sorting_follow_the_selected_acc
             "watchlistpanel",
             "probeScannerWindow",
         ] {
-            window.find(format!("sample-content-bytes:{id}"));
+            assert!(
+                window
+                    .try_find(format!("sample-content-bytes:{id}"))
+                    .is_none()
+            );
         }
         window.find("chat-preview-bytes:chatchannel_local");
         let messages = window
@@ -512,38 +516,12 @@ fn preview_tabs_sample_windows_chat_dividers_and_sorting_follow_the_selected_acc
             .find("chat-member-bytes:chatchannel_local-0")
             .bounds();
         assert_eq!(messages.top(), members.top());
-        assert_eq!(messages.bottom(), members.bottom());
+        assert!(messages.bottom() < members.bottom());
+        let input_bounds = window.find("chat-input-bytes:chatchannel_local").bounds();
+        assert_eq!(input_bounds.bottom(), members.bottom());
+        assert_eq!(input_bounds.right(), members.left());
         assert!((first_message.top() - messages.top()).abs() < px(1.));
         assert!((first_member.top() - members.top()).abs() < px(1.));
-        let body = window.find("inventory-body-bytes:ActiveShipCargo").bounds();
-        let nav = window
-            .find("inventory-navigation-bytes:ActiveShipCargo")
-            .bounds();
-        let items = window
-            .find("inventory-items-bytes:ActiveShipCargo")
-            .bounds();
-        assert_eq!(nav.top(), body.top());
-        assert_eq!(nav.bottom(), body.bottom());
-        assert_eq!(items.top(), body.top());
-        assert_eq!(items.bottom(), body.bottom());
-        assert!(
-            (window
-                .find("inventory-navigation-first-bytes:ActiveShipCargo")
-                .bounds()
-                .top()
-                - body.top())
-            .abs()
-                < px(1.)
-        );
-        assert!(
-            (window
-                .find("inventory-item-first-bytes:ActiveShipCargo")
-                .bounds()
-                .top()
-                - body.top())
-            .abs()
-                < px(1.)
-        );
         window.click("sidebar-overview", cx);
         window.render_frame(cx);
         window.render_frame(cx);
@@ -579,7 +557,7 @@ fn preview_tabs_sample_windows_chat_dividers_and_sorting_follow_the_selected_acc
     .unwrap();
     cx.run_until_parked();
     assert_eq!(
-        read(&files.account)["bytes:ui"]["bytes:local_userlistwidth"]["tuple"][1],
+        read(&files.account)["bytes:ui"]["bytes:chatchannel_local_userlistwidth"]["tuple"][1],
         180
     );
     assert_eq!(
@@ -587,7 +565,7 @@ fn preview_tabs_sample_windows_chat_dividers_and_sorting_follow_the_selected_acc
         40
     );
     assert_eq!(
-        read(&files.account)["bytes:ui"]["bytes:local_usermode"]["tuple"][1],
+        read(&files.account)["bytes:ui"]["bytes:chatchannel_local_usermode"]["tuple"][1],
         false
     );
     assert_eq!(std::fs::read(&files.character).unwrap(), original_char);
@@ -1142,4 +1120,39 @@ fn ships_page_changes_visibility_order_and_custom_color_without_writing_files(
     })
     .unwrap();
     assert_eq!(std::fs::read(&files.account).unwrap(), original);
+}
+
+#[gpui_kit::test]
+fn selecting_windows_and_overview_sections_keeps_save_controls_inside_the_editor(
+    cx: &mut TestAppContext,
+) {
+    let (handle, editor, _files) = setup(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.click("sidebar-overview", cx);
+        window.render_frame(cx);
+        for section in 0..5 {
+            click(&format!("overview-section-{section}"), window, cx);
+            window.render_frame(cx);
+            let bounds = window.find("layout-editor").bounds();
+            for id in [
+                "layout-save",
+                "display-save-account",
+                "display-save-character",
+            ] {
+                let button = window.find(id);
+                assert!(
+                    button.visible(),
+                    "{id} must remain visible in section {section}"
+                );
+                assert!(button.bounds().bottom() <= bounds.bottom());
+            }
+        }
+        editor.update(cx, |editor, cx| {
+            editor.settings_open = false;
+            cx.notify();
+        });
+        window.render_frame(cx);
+        assert!(window.find("layout-save").visible());
+    })
+    .unwrap();
 }

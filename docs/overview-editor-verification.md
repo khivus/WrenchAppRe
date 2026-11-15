@@ -6,8 +6,8 @@ The automated checks use headless GPUI and synthetic DAT fixtures. Desktop appea
 
 - Open Window layout, choose the character/account, and click an overview title, empty body, or sample row. The right pane should open that overview's editor. Select a different tab, select another window, and return by clicking the overview body: the editor should retain the tab currently displayed in that window.
 - Scroll the canvas wheel one notch in each direction, without moving the pointer or performing another action. The overview should redraw immediately. Also check zoom buttons, Fit, dragging and resizing; all preview content should stay inside window bounds.
-- Compare the overview and selected-item preview with medium EVE font at 90% UI scaling. The overview uses 10.8-pixel text and 16.2-pixel rows at desktop scale with a condensed Windows font approximation. EVE's font is not bundled; this is a layout estimate, not a precise glyph-width guarantee. Non-Windows systems may use a fallback font.
-- Narrow Corporation and Alliance until `[WWWWW]` loses its closing bracket, and narrow distance/velocity/name/type columns. Content should clip at column edges, including partial glyphs, without ellipses or spillover. Check column resizing, visibility, order, sorting and copying columns still work. The selected-item sample now includes a thumbnail placeholder and two text lines above the action row.
+- Compare the overview preview with medium EVE font at 90% UI scaling. The overview uses 10.8-pixel text and 16.2-pixel rows at desktop scale with a condensed Windows font approximation. EVE's font is not bundled; this is a layout estimate, not a precise glyph-width guarantee. Non-Windows systems may use a fallback font.
+- Narrow Corporation and Alliance until `[WWWWW]` loses its closing bracket, and narrow distance/velocity/name/type columns. Content should clip at column edges, including partial glyphs, without ellipses or spillover. Check column resizing, visibility, order, sorting and copying columns still work. Selected-item internal content is no longer simulated; its window geometry remains editable.
 
 ## Filters and colors
 
@@ -48,3 +48,11 @@ The automated checks use headless GPUI and synthetic DAT fixtures. Desktop appea
 - Each overview shuffles names from the loaded character list independently for the session. Names remain stable while zooming/dragging. Only player-ship groups receive character names; celestial objects, structures, NPCs and other non-player objects copy Type into Name.
 - Check a friendly preset excluding neutral/no-standing and negative standings, with fleet/corporation/alliance/positive standings always shown. Suspect, criminal and security flags now supplement an underlying standing rather than bypassing standing exclusions. Check hostile/neutral presets too, plus overlapping always-show/hidden states. An unavailable preset displays a diagnostic instead of an unfiltered sample.
 - Backgrounds now blend at 22% strength over the dark preview and respect saved alpha. Color settings themselves are unchanged. Compare against the client; this opacity is an approximation requiring visual confirmation.
+
+## Supported content, chat dividers and docked bookmarks
+
+- D-scan, fleet, watchlist, cargo/inventory, drones, probe scanner and selected-item windows retain editable geometry frames but no longer display fabricated internal content. Overview, chat, target, fighter and Neocom previews remain where internal configuration is supported.
+- Select a chat window → Chats. Change member-column width, message-field height and member visibility; confirm the preview updates and values survive Save account / Reload. Width and visibility now use the verified `chatchannel_<channel>_userlistwidth` and `_usermode` keys. Input sizing retains `chatinputsize_<channel>`.
+- Chat members should occupy the full right side. The bottom message field belongs only beneath the messages, not beneath the member list. Check small windows and hidden-member-list mode for clipping.
+- Switch to Station and Citadel scenes: the in-space standalone bookmarks window should disappear; the ordinary Locations window remains allowed. Return to Space to see bookmarks again.
+- Select multiple windows and all Overview sections, scroll long content, switch Window / element properties, and resize the app. Layout Save and account/character Save controls must remain within the editor. The resizable columns now occupy only the area above the fixed layout footer.

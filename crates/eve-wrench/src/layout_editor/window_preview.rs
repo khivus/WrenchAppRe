@@ -786,6 +786,16 @@ impl LayoutEditor {
                             .test_support()
                     }),
                 );
+            let input = div()
+                .id(SharedString::from(format!("chat-input-{}", state.key)))
+                .test_support()
+                .h(px(layout.input_height as f32 * scale))
+                .flex_none()
+                .border_t_1()
+                .border_color(cx.theme().border)
+                .overflow_hidden()
+                .p(px(4. * scale))
+                .child(t!("display.sampleInput").to_string());
             return Some(
                 base()
                     .id(SharedString::from(format!("chat-preview-{}", state.key)))
@@ -796,186 +806,23 @@ impl LayoutEditor {
                             .min_h_0()
                             .items_stretch()
                             .overflow_hidden()
-                            .child(messages)
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .min_h_0()
+                                    .overflow_hidden()
+                                    .child(messages)
+                                    .child(input),
+                            )
                             .when(layout.show_members, |this| this.child(names)),
-                    )
-                    .child(
-                        div()
-                            .id(SharedString::from(format!("chat-input-{}", state.key)))
-                            .test_support()
-                            .h(px(layout.input_height as f32 * scale))
-                            .flex_none()
-                            .border_t_1()
-                            .border_color(cx.theme().border)
-                            .overflow_hidden()
-                            .p(px(4. * scale))
-                            .child(t!("display.sampleInput").to_string()),
                     )
                     .into_any_element(),
             );
         }
-        let content = match id {
-            "directionalScannerWindow"
-            | "directionalScanner"
-            | "directionalScannerWnd"
-            | "dscanner" => base()
-                .child(line("◉   Filter: Ships and structures", scale))
-                .child(h_flex().children([
-                    cell("Name", 150., scale, cx),
-                    cell("Type", 100., scale, cx),
-                    cell("Distance ▴", 90., scale, cx),
-                ]))
-                .children(
-                    [
-                        ("Caldari Citizen", "Zealot", "—"),
-                        ("Example Character", "Arazu", "—"),
-                        ("Demo Citadel", "Astrahus", "1,404 km"),
-                    ]
-                    .map(|(a, b, c)| {
-                        h_flex().children([
-                            cell(a, 150., scale, cx),
-                            cell(b, 100., scale, cx),
-                            cell(c, 90., scale, cx),
-                        ])
-                    }),
-                )
-                .child(div().flex_1())
-                .child(line("14.3 AU     Angle: 360°     Scan", scale)),
-            "droneview" => base()
-                .child(line("▾ Drones in Bay (20)", scale))
-                .children(
-                    [
-                        "   Hornet EC-300 (5)   ▰▰▰",
-                        "   Infiltrator II (5)     ▰▰▰",
-                        "   Valkyrie II (5)       ▰▰▰",
-                        "   Warrior II (5)        ▰▰▰",
-                    ]
-                    .map(|s| line(s, scale)),
-                )
-                .child(div().flex_1())
-                .child(line("▾ Drones in Space (0/5)", scale))
-                .child(line("   No drones deployed", scale)),
-            "fleetwindow" | "fleet" => base()
-                .child(line("Fleet   Broadcasts   History", scale))
-                .child(line("▾ Fleet (4)", scale))
-                .child(line("   ★ Minmatar Citizen", scale))
-                .child(line("   ▾ Wing 1", scale))
-                .child(line("      ▾ Squad 1", scale))
-                .child(line("         Caldari Citizen", scale))
-                .child(line("         Amarr Citizen", scale))
-                .child(div().flex_1())
-                .child(line("⚑ Align to station · 16:02", scale))
-                .child(line("✚ Need shield · Example Character", scale)),
-            "watchlistpanel" | "watchlist" | "watchlistWnd" => base().children(
-                [
-                    "★ Minmatar Citizen   ▰▰▰",
-                    "  Caldari Citizen              ▰▰▰",
-                    "  Amarr Citizen          ▰▰▰",
-                    "  Example Character          ▰▰▰",
-                ]
-                .map(|s| line(s, scale)),
-            ),
-            "selecteditemview" => base()
-                .font_family("Bahnschrift SemiCondensed")
-                .text_size(px(10.8 * scale))
-                .text_color(rgb(0xd8d8d8))
-                .bg(rgb(0x080808))
-                .child(
-                    h_flex()
-                        .gap(px(6. * scale))
-                        .p(px(4. * scale))
-                        .items_start()
-                        .child(
-                            div()
-                                .size(px(54. * scale))
-                                .flex_none()
-                                .bg(rgb(0x38150f))
-                                .text_color(rgb(0xee7954))
-                                .text_size(px(30. * scale))
-                                .child("◉"),
-                        )
-                        .child(
-                            v_flex()
-                                .child(line("Jita  (0.9)", scale))
-                                .child(line("35.4 AU", scale)),
-                        ),
-                )
-                .child(line("↔  ≫  ↪  ◎  ⊙  ⓘ", scale)),
-            "probeScannerWindow" | "probeScanner" | "scanner" | "probeScannerWnd" => base()
-                .child(line("Analyze     Launch probes", scale))
-                .child(line("ID       Group        Signal", scale))
-                .child(line("ABC-123  Cosmic signature  74%", scale))
-                .child(line("DEF-456  Combat site      100%", scale)),
-            id if id.starts_with("Inventory")
-                || id.starts_with("inv")
-                || id.contains("cargo")
-                || id.contains("Cargo")
-                || id.contains("Hangar") =>
-            {
-                base()
-                    .child(line("Search                 ▦  ☷", scale))
-                    .child(
-                        h_flex()
-                            .id(SharedString::from(format!("inventory-body-{}", state.key)))
-                            .test_support()
-                            .flex_1()
-                            .min_h_0()
-                            .items_stretch()
-                            .overflow_hidden()
-                            .child(
-                                v_flex()
-                                    .id(SharedString::from(format!(
-                                        "inventory-navigation-{}",
-                                        state.key
-                                    )))
-                                    .test_support()
-                                    .w(px(110. * scale))
-                                    .flex_none()
-                                    .border_r_1()
-                                    .border_color(cx.theme().border)
-                                    .child(
-                                        line("▾ Active ship", scale)
-                                            .id(SharedString::from(format!(
-                                                "inventory-navigation-first-{}",
-                                                state.key
-                                            )))
-                                            .test_support(),
-                                    )
-                                    .child(line("   Cargo hold", scale))
-                                    .child(line("   Drone bay", scale))
-                                    .child(line("   Item hangar", scale)),
-                            )
-                            .child(
-                                v_flex()
-                                    .id(SharedString::from(format!(
-                                        "inventory-items-{}",
-                                        state.key
-                                    )))
-                                    .test_support()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .child(
-                                        line("▧ Nanite Repair Paste ×100", scale)
-                                            .id(SharedString::from(format!(
-                                                "inventory-item-first-{}",
-                                                state.key
-                                            )))
-                                            .test_support(),
-                                    )
-                                    .child(line("▧ Liquid Ozone ×550", scale))
-                                    .child(line("▧ Cap Booster 800 ×20", scale)),
-                            ),
-                    )
-                    .child(line("3 items · 120 / 450 m³", scale))
-            }
-            _ => return None,
-        };
-        Some(
-            content
-                .id(SharedString::from(format!("sample-content-{}", state.key)))
-                .test_support()
-                .into_any_element(),
-        )
+        // Window geometry is editable, but internal controls without a supported
+        // settings editor must not pretend to be an accurate game preview.
+        None
     }
 }
 
