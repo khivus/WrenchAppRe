@@ -44,12 +44,12 @@ fn sample(column: &str, index: usize) -> String {
         "TYPE" => ["Arazu", "Amarr Shuttle", "Basilisk", "Astrahus", "Loki"][index].into(),
         "DISTANCE" => ["3,651 m", "4,455 m", "15.6 km", "1.2 AU", "87.3 km"][index].into(),
         "TAG" => ["A", "B", "C", "D", "E"][index].into(),
-        "CORPORATION" => "[DEMO]".into(),
-        "ALLIANCE" => "[TEST]".into(),
+        "CORPORATION" => "[WWWWW]".into(),
+        "ALLIANCE" => "[WWWWW]".into(),
         "FACTION" => "Caldari State".into(),
         "MILITIA" => "State Protectorate".into(),
         "SIZE" => format!("{} m", [135, 25, 115, 1000, 160][index]),
-        "VELOCITY" => format!("{} m/s", [325, 0, 170, 0, 1450][index]),
+        "VELOCITY" => ["528", "527", "678,31", "–", "1 450"][index].into(),
         "RADIALVELOCITY" => format!("{} m/s", [-24, 0, 85, 0, -112][index]),
         "TRANSVERSALVELOCITY" => format!("{} m/s", [74, 0, 67, 0, 350][index]),
         "ANGULARVELOCITY" => [
@@ -120,8 +120,21 @@ impl LayoutEditor {
             .flex_1()
             .min_h_0()
             .overflow_hidden()
-            .text_size(px(11. * scale))
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .bg(rgb(0x080808))
+            .font_family("Bahnschrift SemiCondensed")
+            .text_color(rgb(0xd8d8d8))
+            .text_size(px(10.8 * scale))
+            .line_height(px(16.2 * scale))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener({
+                    let key = state.key.clone();
+                    move |this, _, window, cx| {
+                        cx.stop_propagation();
+                        this.select(Some(key.clone()), window, cx);
+                    }
+                }),
+            )
             .child(
                 h_flex()
                     .h(px(24. * scale))
@@ -172,7 +185,7 @@ impl LayoutEditor {
             )
             .child(
                 h_flex()
-                    .h(px(20. * scale))
+                    .h(px(16.2 * scale))
                     .flex_none()
                     .overflow_hidden()
                     .border_b_1()
@@ -204,7 +217,14 @@ impl LayoutEditor {
                             .border_r_1()
                             .border_color(cx.theme().border)
                             .px(px(2. * scale))
-                            .child(div().flex_1().min_w_0().truncate().child(label))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .whitespace_nowrap()
+                                    .child(label),
+                            )
                             .when_some(sorted, |this, (_, ascending)| {
                                 this.child(
                                     div()
@@ -230,7 +250,7 @@ impl LayoutEditor {
             indexes.sort_by(|a, b| {
                 let numeric = match column.as_str() {
                     "DISTANCE" => Some([3651., 4455., 15600., 179517444840., 87300.]),
-                    "VELOCITY" => Some([325., 0., 170., 0., 1450.]),
+                    "VELOCITY" => Some([528., 527., 678.31, 0., 1450.]),
                     "SIZE" => Some([135., 25., 115., 1000., 160.]),
                     "RADIALVELOCITY" => Some([-24., 0., 85., 0., -112.]),
                     "TRANSVERSALVELOCITY" => Some([74., 0., 67., 0., 350.]),
@@ -251,7 +271,7 @@ impl LayoutEditor {
                         state.key
                     )))
                     .test_support()
-                    .h(px(20. * scale))
+                    .h(px(16.2 * scale))
                     .flex_none()
                     .overflow_hidden()
                     .bg(if index % 2 == 0 {
@@ -468,8 +488,30 @@ impl LayoutEditor {
                 .map(|s| line(s, scale)),
             ),
             "selecteditemview" => base()
-                .child(line("◇ Example station", scale))
-                .child(line("0 m · Astrahus", scale))
+                .font_family("Bahnschrift SemiCondensed")
+                .text_size(px(10.8 * scale))
+                .text_color(rgb(0xd8d8d8))
+                .bg(rgb(0x080808))
+                .child(
+                    h_flex()
+                        .gap(px(6. * scale))
+                        .p(px(4. * scale))
+                        .items_start()
+                        .child(
+                            div()
+                                .size(px(54. * scale))
+                                .flex_none()
+                                .bg(rgb(0x38150f))
+                                .text_color(rgb(0xee7954))
+                                .text_size(px(30. * scale))
+                                .child("◉"),
+                        )
+                        .child(
+                            v_flex()
+                                .child(line("Eszur  (0.2)", scale))
+                                .child(line("35.4 AU", scale)),
+                        ),
+                )
                 .child(line("↔  ≫  ↪  ◎  ⊙  ⓘ", scale)),
             "probeScannerWindow" | "probeScanner" | "scanner" | "probeScannerWnd" => base()
                 .child(line("Analyze     Launch probes", scale))

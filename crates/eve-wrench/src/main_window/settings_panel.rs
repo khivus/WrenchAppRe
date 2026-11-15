@@ -87,6 +87,8 @@ impl Render for SettingsPanel {
         }
 
         let content = v_flex()
+            .w_full()
+            .flex_none()
             .text_sm()
             .child(Self::section(t!("settings.appearance").to_string(), cx))
             .child(
@@ -155,6 +157,34 @@ impl Render for SettingsPanel {
                     ),
             )
             .child(Self::section(t!("extra.title").to_string(), cx))
+            .child(
+                Self::row(cx)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .whitespace_normal()
+                            .text_xs()
+                            .child(t!("settings.forceDscanMax").to_string()),
+                    )
+                    .child(
+                        Switch::new("force-dscan-max")
+                            .small()
+                            .checked(config.force_dscan_max_range)
+                            .on_change({
+                                let store = self.store.clone();
+                                move |enabled, _, cx| {
+                                    store
+                                        .update(cx, |store, cx| {
+                                            store.update_config(cx, |config| {
+                                                config.force_dscan_max_range = *enabled
+                                            })
+                                        })
+                                        .ok();
+                                }
+                            }),
+                    ),
+            )
             .child(
                 div()
                     .flex_none()
@@ -245,11 +275,11 @@ impl Render for SettingsPanel {
                     ),
             )
             .child(
-                h_flex()
+                v_flex()
                     .flex_none()
                     .px_4()
                     .py_2p5()
-                    .gap_3()
+                    .gap_2()
                     .bg(cx.theme().muted.opacity(0.35))
                     .child(
                         div()
@@ -272,7 +302,7 @@ impl Render for SettingsPanel {
             );
         self.scroll
             .view("settings-panel", content, |this| &mut this.scroll, cx)
-            .w(px(320.))
+            .w(px(390.))
             .max_h((window.viewport_size().height - px(80.)).max(px(160.)))
     }
 }

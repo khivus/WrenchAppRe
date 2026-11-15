@@ -211,6 +211,7 @@ impl MainView {
             })
             .collect();
         let backup = self.auto_backup(cx);
+        let force_max_dscan = self.store.read(cx).config().force_dscan_max_range;
 
         self.copying = true;
         cx.notify();
@@ -222,11 +223,12 @@ impl MainView {
                 let mut copied = 0;
                 let mut errors = Vec::new();
                 for (plan, excluded) in jobs {
-                    match copy::copy_settings_selective(
+                    match copy::copy_settings_with_dscan(
                         Path::new(plan.source.path()),
                         &plan.targets,
                         &excluded,
                         backup,
+                        force_max_dscan,
                     ) {
                         Ok(count) => copied += count,
                         Err(error) => {

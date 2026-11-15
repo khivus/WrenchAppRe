@@ -101,6 +101,7 @@ pub(super) struct DisplayEditor {
     status: Option<String>,
     page: Page,
     inputs: HashMap<String, Entity<InputState>>,
+    colors: HashMap<String, Entity<gpui_kit::component::color_picker::ColorPickerState>>,
     invalid: HashMap<String, SettingsKind>,
     subscriptions: Vec<Subscription>,
     pub(super) scroll: SmoothScroll,
@@ -111,7 +112,7 @@ pub(super) struct DisplayEditor {
     selected_tab: Option<String>,
     selected_preset: Option<String>,
     group_search: Entity<InputState>,
-    group_page: usize,
+    expanded_categories: HashSet<String>,
     overview_section: usize,
     selected_groups_only: bool,
     appearance_background: bool,
@@ -189,8 +190,7 @@ impl DisplayEditor {
                     }
                 }
             }),
-            cx.subscribe(&group_search, |this, _, _: &InputEvent, cx| {
-                this.group_page = 0;
+            cx.subscribe(&group_search, |_, _, _: &InputEvent, cx| {
                 cx.emit(DisplayChanged);
                 cx.notify();
             }),
@@ -207,6 +207,7 @@ impl DisplayEditor {
             status: None,
             page: Page::Overview,
             inputs: HashMap::new(),
+            colors: HashMap::new(),
             invalid: HashMap::new(),
             subscriptions,
             scroll: Default::default(),
@@ -217,9 +218,9 @@ impl DisplayEditor {
             selected_tab: None,
             selected_preset: None,
             group_search,
-            group_page: 0,
+            expanded_categories: HashSet::new(),
             overview_section: 0,
-            selected_groups_only: true,
+            selected_groups_only: false,
             appearance_background: false,
             columns_top: Default::default(),
             chats: Vec::new(),
@@ -1043,6 +1044,11 @@ impl DisplayEditor {
                 None,
                 cx,
             ))
+            .child(
+                div()
+                    .text_xs()
+                    .child(t!("display.neocomCatalogHint").to_string()),
+            )
             .child(self.neocom_add_menu(cx))
             .children(rows)
             .into_any_element()

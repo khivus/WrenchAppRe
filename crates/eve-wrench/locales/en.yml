@@ -96,6 +96,7 @@ backup:
   selectedCount: "%{count} selected"
   deleteSelected: "Delete selected"
 settings:
+  forceDscanMax: "Force D-scan to 14.4 AU when syncing account settings"
   appearance: "Appearance"
   darkTheme: "Dark theme"
   themeSaveFailed: "Failed to save theme preference"
@@ -577,6 +578,7 @@ display:
   positionX: "Position X (px)"
   positionY: "Position Y (px)"
   detachFighters: "Detach fighter panel"
+  neocomCatalogHint: "Add a supported EVE shortcut or restore a saved button. Already pinned buttons are excluded."
   neocomHint: "Width and side belong to this character. Buttons keep their original data, groups and children when reordered. The canvas uses schematic button icons."
   neocomWidth: "Width (32–72 px)"
   side: "Side"
@@ -601,6 +603,7 @@ display:
   chatMembers: "Show member list"
   sampleInput: "Type a message…"
   options: "Options"
+  ships: "Ships"
   tabsColumns: "Tabs & columns"
   filters: "Filters"
   colors: "Colors"

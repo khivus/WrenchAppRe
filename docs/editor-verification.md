@@ -2,7 +2,7 @@
 
 ## Automated verification completed
 
-- Workspace tests: 172 passed (89 UI/model tests and 83 core tests); one
+- Workspace tests: 190 passed (94 UI/model tests and 96 core tests); one
   opt-in network download test remains ignored.
 - Strict Clippy for the workspace and all targets passed; formatting passed.
 - Tests cover real pointer-driven sidebar/table resizing, independent preview
@@ -10,6 +10,8 @@
   reordering, DAT round trips, checksum preservation, backups and contract sync.
 - Verification uses headless UI interactions and layout measurements. Live desktop
   inspection and in-game acceptance remain unverified.
+
+See [the overview editor checklist](overview-editor-verification.md) for grouped filters, visual color pickers, ship labels, tab placement, preview clipping, wheel redraw and the optional D-scan sync override.
 
 ## Manual checks in the app
 

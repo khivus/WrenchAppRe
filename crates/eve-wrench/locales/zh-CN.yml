@@ -96,6 +96,7 @@ backup:
   selectedCount: "已选择 %{count} 个"
   deleteSelected: "删除所选"
 settings:
+  forceDscanMax: "同步账号设置时将定向扫描范围设为 14.4 AU"
   appearance: "外观"
   darkTheme: "深色主题"
   themeSaveFailed: "保存主题设置失败"
@@ -577,6 +578,7 @@ display:
   positionX: "X 位置 (px)"
   positionY: "Y 位置 (px)"
   detachFighters: "分离舰载机面板"
+  neocomCatalogHint: "添加支持的 EVE 快捷方式或恢复已保存的按钮，已固定的按钮不会重复列出。"
   neocomHint: "宽度和停靠侧属于角色设置。调整按钮顺序时保留原始数据、分组及子项。画布使用示意按钮图标。"
   neocomWidth: "宽度 (32–72 px)"
   side: "停靠侧"
@@ -601,6 +603,7 @@ display:
   chatMembers: "显示成员列表"
   sampleInput: "输入消息…"
   options: "选项"
+  ships: "舰船标签"
   tabsColumns: "标签与列"
   filters: "过滤器"
   colors: "颜色"

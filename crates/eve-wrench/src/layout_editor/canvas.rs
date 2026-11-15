@@ -142,6 +142,12 @@ impl LayoutEditor {
             zoom,
             pan: offset - Mapping::centered(bounds, screen, scale),
         };
+        // Wheel callbacks may run while the cached canvas is rendering. Mark
+        // both entities dirty so the first wheel event paints immediately.
+        self.canvas_stamp = None;
+        if let Some(preview) = &self.canvas_preview {
+            preview.update(cx, |_, cx| cx.notify());
+        }
         cx.notify();
     }
 
@@ -795,6 +801,7 @@ impl LayoutEditor {
         let parent = cx.entity().downgrade();
         div()
             .id("layout-canvas")
+            .test_support()
             .relative()
             .flex_1()
             .size_full()

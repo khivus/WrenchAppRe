@@ -830,9 +830,11 @@ fn overview_and_character_settings_save_separately_with_backups(cx: &mut TestApp
         window.render_frame(cx);
         click("overview-section-1", window, cx);
         window.render_frame(cx);
-        window.click("filter-group-27", cx);
+        click("category-Ship", window, cx);
         window.render_frame(cx);
-        window.click("filter-always-11", cx);
+        click("filter-group-27", window, cx);
+        window.render_frame(cx);
+        click("filter-always-11", window, cx);
         window.render_frame(cx);
         click("overview-section-2", window, cx);
         window.render_frame(cx);
@@ -972,4 +974,170 @@ fn unsupported_coordinate_records_are_rejected_without_mutating_settings(cx: &mu
     .unwrap();
     assert_eq!(std::fs::read(&files.account).unwrap(), account_bytes);
     assert_eq!(std::fs::read(&files.character).unwrap(), char_bytes);
+}
+
+#[gpui_kit::test]
+fn overview_body_focuses_active_tab_and_first_wheel_event_redraws(cx: &mut TestAppContext) {
+    let (handle, editor, _files) = setup(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.render_frame(cx);
+        window.click("overview-sample-bytes:overview-0", cx);
+        window.render_frame(cx);
+        assert!(editor.read(cx).settings_open);
+        assert_eq!(
+            editor.read(cx).settings.read(cx).selected_tab.as_deref(),
+            Some("int:0")
+        );
+        let canvas = editor.read(cx).canvas_preview.clone().unwrap();
+        let before = window
+            .find("overview-header-bytes:overview-NAME")
+            .bounds()
+            .size
+            .width;
+        let builds = canvas.read(cx).builds;
+        window.scroll("layout-canvas", ScrollDelta::Lines(point(0., 1.)), cx);
+        window.simulate_next_frame(cx);
+        window.draw(cx).clear(cx);
+        assert!(canvas.read(cx).builds > builds);
+        assert!(
+            window
+                .find("overview-header-bytes:overview-NAME")
+                .bounds()
+                .size
+                .width
+                > before
+        );
+        assert!(!editor.read(cx).has_pending_edits());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn category_selection_stages_account_only(cx: &mut TestAppContext) {
+    let (handle, editor, files) = setup(cx);
+    let original = std::fs::read(&files.account).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("sidebar-overview", cx);
+        window.render_frame(cx);
+        click("overview-section-1", window, cx);
+        window.render_frame(cx);
+        click("category-all-Ship", window, cx);
+        window.render_frame(cx);
+        let settings = editor.read(cx).settings.clone();
+        let ship_ids = overview::categories()
+            .into_iter()
+            .find(|(name, _)| name == "Ship")
+            .unwrap()
+            .1;
+        let included = overview::ids(
+            settings
+                .read(cx)
+                .doc(SettingsKind::User)
+                .unwrap()
+                .value("overview", "overviewProfilePresets")
+                .unwrap()["utf8:My preset"]
+                .get("bytes:groups"),
+        );
+        assert!(ship_ids.iter().all(|id| included.contains(id)));
+        click("category-all-Ship", window, cx);
+        window.render_frame(cx);
+        let included = overview::ids(
+            settings
+                .read(cx)
+                .doc(SettingsKind::User)
+                .unwrap()
+                .value("overview", "overviewProfilePresets")
+                .unwrap()["utf8:My preset"]
+                .get("bytes:groups"),
+        );
+        assert!(ship_ids.iter().all(|id| !included.contains(id)));
+        assert!(
+            !settings
+                .read(cx)
+                .doc(SettingsKind::Char)
+                .unwrap()
+                .is_dirty()
+        );
+    })
+    .unwrap();
+    assert_eq!(std::fs::read(&files.account).unwrap(), original);
+}
+
+#[gpui_kit::test]
+fn ships_page_changes_visibility_order_and_custom_color_without_writing_files(
+    cx: &mut TestAppContext,
+) {
+    let (handle, editor, files) = setup(cx);
+    let mut account = read(&files.account);
+    account["bytes:overview"]["bytes:shipLabels"] = json!({"tuple":["long:1",[
+        {"bytes:type":"utf8:pilot name","bytes:state":true,"bytes:color":null,"bytes:fontsize":null,"bytes:pre":"utf8:","bytes:post":"utf8:","bytes:future":17},
+        {"bytes:type":"utf8:ship type","bytes:state":true,"bytes:color":null}
+    ]]});
+    let original = encode(account);
+    std::fs::write(&files.account, &original).unwrap();
+    cx.update_window(handle, |_, window, cx| {
+        editor.read(cx).settings.clone().update(cx, |settings, cx| {
+            settings.load(PathBuf::from(&files.account), true, window, cx)
+        });
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.click("sidebar-overview", cx);
+        window.render_frame(cx);
+        click("overview-section-4", window, cx);
+        window.render_frame(cx);
+        click("ship-label-0-state", window, cx);
+        window.render_frame(cx);
+        let settings = editor.read(cx).settings.clone();
+        let picker = settings
+            .read(cx)
+            .colors
+            .iter()
+            .find(|(key, _)| key.ends_with("-ship-label-0"))
+            .unwrap()
+            .1
+            .clone();
+        picker.update(cx, |_, cx| {
+            cx.emit(gpui_kit::component::color_picker::ColorPickerEvent::Change(
+                Some(gpui_kit::rgb(0x33ccff).into()),
+            ))
+        });
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        let settings = editor.read(cx).settings.clone();
+        let label = &settings
+            .read(cx)
+            .doc(SettingsKind::User)
+            .unwrap()
+            .value("overview", "shipLabels")
+            .unwrap()[0];
+        assert_eq!(label["bytes:state"], false);
+        assert_eq!(label["bytes:future"], 17);
+        assert!(label["bytes:color"]["tuple"][2].as_f64().unwrap() > 0.99);
+        click("ship-label-order-0-1", window, cx);
+        window.render_frame(cx);
+        assert_eq!(
+            settings
+                .read(cx)
+                .doc(SettingsKind::User)
+                .unwrap()
+                .value("overview", "shipLabels")
+                .unwrap()[1]["bytes:future"],
+            17
+        );
+        assert!(
+            !settings
+                .read(cx)
+                .doc(SettingsKind::Char)
+                .unwrap()
+                .is_dirty()
+        );
+    })
+    .unwrap();
+    assert_eq!(std::fs::read(&files.account).unwrap(), original);
 }

@@ -462,8 +462,24 @@ impl LayoutEditor {
             self.settings_open = false;
             if let Some(id) = id {
                 if id == "overview" || id.starts_with("overview_") {
-                    self.settings
-                        .update(cx, |settings, cx| settings.select_overview_window(&id, cx));
+                    self.settings.update(cx, |settings, cx| {
+                        settings.select_overview_window(&id, cx);
+                        if let Some(tab_id) = self
+                            .selected
+                            .as_ref()
+                            .and_then(|key| self.preview_overview_tabs.get(key))
+                            && let Some(tab) = self
+                                .preview_settings
+                                .doc(eve_wrench_core::SettingsKind::User)
+                                .and_then(|doc| {
+                                    eve_wrench_core::display_settings::overview::tabs(doc)
+                                        .into_iter()
+                                        .find(|t| t.id == *tab_id)
+                                })
+                        {
+                            settings.select_overview_tab(tab.key, cx);
+                        }
+                    });
                     self.settings_open = true;
                 } else if eve_wrench_core::display_settings::chat::channel(&id).is_some() {
                     self.settings

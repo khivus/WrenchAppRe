@@ -76,6 +76,214 @@ fn leaves(
 }
 
 impl DisplayEditor {
+    pub(super) fn render_ships(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let labels = self
+            .doc(SettingsKind::User)
+            .and_then(|doc| doc.value("overview", "shipLabels"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut lines = Vec::new();
+        let mut current = h_flex().min_h(px(6.));
+        for item in labels
+            .iter()
+            .filter(|item| item.get("bytes:state").and_then(boolean).unwrap_or(true))
+        {
+            let kind = item.get("bytes:type").and_then(text).unwrap_or("");
+            if kind.is_empty() || kind.eq_ignore_ascii_case("linebreak") {
+                lines.push(current);
+                current = h_flex().min_h(px(6.));
+                continue;
+            }
+            let sample = match kind.to_lowercase().as_str() {
+                "ship type" => "Arazu",
+                "pilot name" => "Syatoslav Trubochist",
+                "corp ticker" | "corporation" | "corp" => "WWWWW",
+                "alliance" | "alliance short name" => "WWWWW",
+                "ship name" => "Example ship",
+                "" => "",
+                _ => kind,
+            };
+            let color = item
+                .get("bytes:color")
+                .and_then(|v| v.get("tuple"))
+                .and_then(Value::as_array)
+                .filter(|a| a.len() >= 3)
+                .map(|a| {
+                    rgb(((a[0].as_f64().unwrap_or(1.) * 255.) as u32) << 16
+                        | ((a[1].as_f64().unwrap_or(1.) * 255.) as u32) << 8
+                        | (a[2].as_f64().unwrap_or(1.) * 255.) as u32)
+                })
+                .unwrap_or(rgb(0xdddddd));
+            let span = div()
+                .flex_none()
+                .whitespace_nowrap()
+                .text_color(color)
+                .text_size(px(
+                    item.get("bytes:fontsize").and_then(integer).unwrap_or(12) as f32,
+                ))
+                .when(
+                    item.get("bytes:bold").and_then(boolean) == Some(true),
+                    |this| this.font_weight(FontWeight::BOLD),
+                )
+                .when(
+                    item.get("bytes:italic").and_then(boolean) == Some(true),
+                    |this| this.italic(),
+                )
+                .when(
+                    item.get("bytes:underline").and_then(boolean) == Some(true),
+                    |this| this.underline(),
+                )
+                .min_h(px(6.))
+                .child(format!(
+                    "{}{}{}",
+                    item.get("bytes:pre").and_then(text).unwrap_or(""),
+                    sample,
+                    item.get("bytes:post").and_then(text).unwrap_or("")
+                ));
+            current = current.child(span);
+        }
+        lines.push(current);
+        let preview = v_flex()
+            .p_2()
+            .bg(rgb(0x080808))
+            .overflow_hidden()
+            .children(lines);
+        let mut rows = Vec::new();
+        for (index, item) in labels.iter().enumerate() {
+            let name = item
+                .get("bytes:type")
+                .and_then(text)
+                .unwrap_or("Linebreak")
+                .to_owned();
+            let mut row =
+                v_flex()
+                    .gap_2()
+                    .pb_3()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(div().flex_1().text_sm().child(name))
+                            .children([(-1isize, "↑"), (1, "↓")].into_iter().map(
+                                |(delta, label)| {
+                                    Button::new(SharedString::from(format!(
+                                        "ship-label-order-{index}-{delta}"
+                                    )))
+                                    .ghost()
+                                    .xsmall()
+                                    .label(label)
+                                    .disabled(
+                                        (delta < 0 && index == 0)
+                                            || (delta > 0 && index + 1 >= labels.len()),
+                                    )
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.reorder_record("shipLabels", index, delta, cx)
+                                    }))
+                                },
+                            )),
+                    );
+            for (field, title) in [
+                ("state", "Show"),
+                ("bold", "Bold"),
+                ("italic", "Italic"),
+                ("underline", "Underline"),
+            ] {
+                let enabled = item
+                    .get(format!("bytes:{field}"))
+                    .and_then(boolean)
+                    .unwrap_or(false);
+                row = row.child(
+                    h_flex()
+                        .gap_2()
+                        .child(div().flex_1().text_xs().child(title))
+                        .child(
+                            Switch::new(SharedString::from(format!("ship-label-{index}-{field}")))
+                                .small()
+                                .checked(enabled)
+                                .on_click(cx.listener(move |this, on: &bool, _, cx| {
+                                    this.edit(
+                                        SettingsKind::User,
+                                        "overview",
+                                        "shipLabels",
+                                        |v| {
+                                            if let Some(map) =
+                                                v.get_mut(index).and_then(Value::as_object_mut)
+                                            {
+                                                map.insert(format!("bytes:{field}"), json!(*on));
+                                            }
+                                        },
+                                        cx,
+                                    );
+                                })),
+                        ),
+                );
+            }
+            for (field, title) in [
+                ("pre", "Prefix"),
+                ("post", "Suffix"),
+                ("fontsize", "Font size"),
+            ] {
+                if item.get(format!("bytes:{field}")).is_some() {
+                    row = row.child(self.input(
+                        Field::OverviewLeaf("shipLabels".into(), format!("/{index}/bytes:{field}")),
+                        title.into(),
+                        window,
+                        cx,
+                    ));
+                }
+            }
+            let color = item
+                .get("bytes:color")
+                .and_then(|v| v.get("tuple"))
+                .and_then(Value::as_array)
+                .filter(|a| a.len() >= 3)
+                .map(|a| {
+                    [
+                        a[0].as_f64().unwrap_or(1.) as f32,
+                        a[1].as_f64().unwrap_or(1.) as f32,
+                        a[2].as_f64().unwrap_or(1.) as f32,
+                    ]
+                });
+            row = row.child(self.color_control(
+                &format!("ship-label-{index}"),
+                color,
+                window,
+                move |this, color, cx| {
+                    this.edit(
+                        SettingsKind::User,
+                        "overview",
+                        "shipLabels",
+                        |v| {
+                            if let Some(map) = v.get_mut(index).and_then(Value::as_object_mut) {
+                                map.insert(
+                                    "bytes:color".into(),
+                                    color
+                                        .map(|rgb| json!({"tuple":[rgb[0],rgb[1],rgb[2],1.]}))
+                                        .unwrap_or(Value::Null),
+                                );
+                            }
+                        },
+                        cx,
+                    );
+                },
+                cx,
+            ));
+            rows.push(row);
+        }
+        v_flex().gap_3().child(div().text_sm().child("Ship / object labels in space"))
+            .child(div().text_xs().child("Changes apply to bracket text in game. Enable Always Show Bracket Text in Settings to show labels for unselected objects."))
+            .child(preview)
+            .children(rows)
+            .when(labels.is_empty(), |this| this.child(div().text_sm().child("No saved ship labels. Configure Ships in EVE once, then reload the account.")))
+            .into_any_element()
+    }
+
     fn record_membership(&self, key: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
         let choices: Vec<(Value, String)> = match key {
             "alwaysShow" | "filterOut" | "unfiltered" => overview::STATES

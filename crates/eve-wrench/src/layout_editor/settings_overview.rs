@@ -2,6 +2,59 @@ use super::*;
 use gpui_kit::base::ScrollbarHandle as _;
 
 impl DisplayEditor {
+    pub(super) fn color_control(
+        &mut self,
+        id: &str,
+        value: Option<[f32; 3]>,
+        window: &mut Window,
+        apply: impl Fn(&mut Self, Option<[f32; 3]>, &mut Context<Self>) + Clone + 'static,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        use gpui_kit::component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
+        let key = format!("{:?}-{id}", self.account);
+        let color: Option<Hsla> = value.map(|v| {
+            rgb(((v[0] * 255.) as u32) << 16 | ((v[1] * 255.) as u32) << 8 | (v[2] * 255.) as u32)
+                .into()
+        });
+        let reset = apply.clone();
+        if !self.colors.contains_key(&key) {
+            let state = cx.new(|cx| ColorPickerState::new(window, cx));
+            self.subscriptions.push(cx.subscribe(
+                &state,
+                move |this, _, event: &ColorPickerEvent, cx| {
+                    let ColorPickerEvent::Change(value) = event;
+                    apply(
+                        this,
+                        value.map(|v| {
+                            let rgb: Rgba = v.into();
+                            [rgb.r, rgb.g, rgb.b]
+                        }),
+                        cx,
+                    );
+                },
+            ));
+            self.colors.insert(key.clone(), state);
+        }
+        let state = self.colors[&key].clone();
+        if state.read(cx).value() != color {
+            state.update(cx, |state, cx| match color {
+                Some(color) => state.set_value(color, window, cx),
+                None => state.clear_value(window, cx),
+            });
+        }
+        h_flex()
+            .gap_1()
+            .child(ColorPicker::new(&state).small())
+            .child(
+                Button::new(SharedString::from(format!("color-default-{id}")))
+                    .ghost()
+                    .xsmall()
+                    .label(t!("display.defaultColor").to_string())
+                    .on_click(cx.listener(move |this, _, _, cx| reset(this, None, cx))),
+            )
+            .into_any_element()
+    }
+
     pub(super) fn picker(
         &self,
         id: &str,
@@ -62,8 +115,9 @@ impl DisplayEditor {
         else {
             return match self.overview_section {
                 1 => self.render_filters(None, cx),
-                2 => self.render_appearance(cx),
+                2 => self.render_appearance(window, cx),
                 3 => self.render_overview_options(cx),
+                4 => self.render_ships(window, cx),
                 _ => v_flex()
                     .gap_3()
                     .child(hint("display.noOverviewTabs", cx))
@@ -93,7 +147,8 @@ impl DisplayEditor {
         let section = match self.overview_section {
             0 => self.render_tab_columns(&tab, window, cx),
             1 => self.render_filters(Some(&tab), cx),
-            2 => self.render_appearance(cx),
+            2 => self.render_appearance(window, cx),
+            4 => self.render_ships(window, cx),
             _ => self.render_overview_options(cx),
         };
         v_flex()
@@ -101,7 +156,7 @@ impl DisplayEditor {
             .child(picker)
             .child(
                 h_flex().gap_1().children(
-                    ["tabsColumns", "filters", "colors", "options"]
+                    ["tabsColumns", "filters", "colors", "options", "ships"]
                         .into_iter()
                         .enumerate()
                         .map(|(index, key)| {
@@ -141,18 +196,119 @@ impl DisplayEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let account = self.doc(SettingsKind::User).unwrap();
+        let instances = account
+            .value("overview", "tabsByWindowInstanceID")
+            .and_then(Value::as_array)
+            .map_or(1, Vec::len)
+            .max(1);
+        let instance = (0..instances)
+            .find(|i| {
+                overview::assigned_tabs(account, *i)
+                    .iter()
+                    .any(|t| t.id == tab.id)
+            })
+            .unwrap_or(0);
+        let assigned = overview::assigned_tabs(account, instance);
+        let position = assigned.iter().position(|t| t.id == tab.id).unwrap_or(0);
+        let tab_id = tab.id;
+        let placement = self.picker(
+            "tab-window",
+            format!(
+                "Window: {}",
+                if instance == 0 {
+                    "Main overview".into()
+                } else {
+                    format!("Overview {instance}")
+                }
+            ),
+            (0..instances)
+                .map(|i| {
+                    (
+                        i.to_string(),
+                        if i == 0 {
+                            "Main overview".into()
+                        } else {
+                            format!("Overview {i}")
+                        },
+                    )
+                })
+                .collect(),
+            instance.to_string(),
+            move |this, value, cx| {
+                if let Ok(instance) = value.parse() {
+                    this.error = this
+                        .doc_mut(SettingsKind::User)
+                        .and_then(|doc| overview::place_tab(doc, tab_id, instance, usize::MAX))
+                        .err();
+                    cx.emit(DisplayChanged);
+                    cx.notify();
+                }
+            },
+            cx,
+        );
+        let reorder = h_flex().gap_2().children(
+            [(-1isize, "Move tab left"), (1, "Move tab right")]
+                .into_iter()
+                .map(|(delta, label)| {
+                    Button::new(SharedString::from(format!("tab-order-{delta}")))
+                        .outline()
+                        .small()
+                        .label(label)
+                        .disabled(
+                            (delta < 0 && position == 0)
+                                || (delta > 0 && position + 1 >= assigned.len()),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.error = this
+                                .doc_mut(SettingsKind::User)
+                                .and_then(|doc| {
+                                    overview::place_tab(
+                                        doc,
+                                        tab_id,
+                                        instance,
+                                        position.saturating_add_signed(delta),
+                                    )
+                                })
+                                .err();
+                            cx.emit(DisplayChanged);
+                            cx.notify();
+                        }))
+                }),
+        );
         let name = self.input(
             Field::TabName(tab.key.clone()),
             t!("display.tabName").to_string(),
             window,
             cx,
         );
-        let color = self.input(
+        let color_input = self.input(
             Field::TabColor(tab.key.clone()),
             t!("display.tabColor").to_string(),
             window,
             cx,
         );
+        let key = tab.key.clone();
+        let picker = self.color_control(
+            &format!("tab-color-{}", tab.key),
+            tab.color,
+            window,
+            move |this, color, cx| {
+                this.inputs.retain(|id, _| !id.contains("TabColor"));
+                this.invalid.retain(|id, _| !id.contains("TabColor"));
+                this.set_tab(
+                    &key,
+                    "color",
+                    color.map(|rgb| json!({"tuple":rgb})).unwrap_or(Value::Null),
+                    cx,
+                );
+            },
+            cx,
+        );
+        let color = h_flex()
+            .gap_2()
+            .child(div().flex_1().child(color_input))
+            .child(picker);
         let raw = self
             .doc(SettingsKind::User)
             .and_then(|d| d.value("overview", "tabsettings_new"))
@@ -361,6 +517,8 @@ impl DisplayEditor {
         v_flex()
             .gap_3()
             .child(name)
+            .child(placement)
+            .child(reorder)
             .child(color)
             .child(filter)
             .child(bracket)
@@ -630,7 +788,6 @@ impl DisplayEditor {
             selected,
             |this, key, cx| {
                 this.selected_preset = Some(key);
-                this.group_page = 0;
                 this.scroll.reset();
                 cx.emit(DisplayChanged);
                 cx.notify();
@@ -652,7 +809,16 @@ impl DisplayEditor {
             .unwrap_or(json!({}));
         let included = overview::ids(raw.get("bytes:groups"));
         let query = self.group_search.read(cx).value().trim().to_lowercase();
-        let mut groups = overview::group_catalog().to_vec();
+        let catalog_categories = overview::categories();
+        let known: HashSet<i64> = catalog_categories
+            .iter()
+            .flat_map(|(_, ids)| ids.iter().copied())
+            .collect();
+        let mut groups: Vec<_> = overview::group_catalog()
+            .iter()
+            .filter(|(id, _)| known.contains(id) || included.contains(id))
+            .cloned()
+            .collect();
         for id in &included {
             if !groups.iter().any(|(n, _)| n == id) {
                 groups.push((*id, format!("{} {id}", t!("display.group"))));
@@ -662,40 +828,125 @@ impl DisplayEditor {
             .into_iter()
             .filter(|(id, name)| {
                 (!self.selected_groups_only || !query.is_empty() || included.contains(id))
-                    && query
-                        .split_whitespace()
-                        .all(|s| name.to_lowercase().contains(s) || id.to_string().contains(s))
+                    && query.split_whitespace().all(|s| {
+                        name.to_lowercase().contains(s)
+                            || id.to_string().contains(s)
+                            || catalog_categories.iter().any(|(category, ids)| {
+                                ids.contains(id) && category.to_lowercase().contains(s)
+                            })
+                    })
             })
             .collect();
-        let pages = groups.len().div_ceil(40).max(1);
-        let page = self.group_page.min(pages - 1);
-        let group_rows: Vec<_> = groups
+        let mut categories = overview::categories();
+        let known: HashSet<i64> = categories
             .iter()
-            .skip(page * 40)
-            .take(40)
-            .map(|(id, name)| {
-                let id = *id;
-                let checked = included.contains(&id);
-                let preset = preset.clone();
+            .flat_map(|(_, ids)| ids.iter().copied())
+            .collect();
+        let other: Vec<_> = groups
+            .iter()
+            .filter(|(id, _)| !known.contains(id))
+            .map(|(id, _)| *id)
+            .collect();
+        if !other.is_empty() {
+            categories.push(("Other / saved groups".into(), other));
+        }
+        let mut group_rows = Vec::new();
+        for (category, ids) in categories {
+            let members: Vec<_> = groups
+                .iter()
+                .filter(|(id, _)| ids.contains(id))
+                .cloned()
+                .collect();
+            if members.is_empty() {
+                continue;
+            }
+            let count = ids.iter().filter(|id| included.contains(id)).count();
+            let expanded = !query.is_empty() || self.expanded_categories.contains(&category);
+            let name = category.clone();
+            let preset_key = preset.clone();
+            let all_ids = ids.clone();
+            group_rows.push(
                 h_flex()
                     .gap_2()
                     .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_sm()
-                            .child(format!("{name} ({id})")),
-                    )
-                    .child(
-                        Switch::new(SharedString::from(format!("filter-group-{id}")))
+                        Button::new(SharedString::from(format!("category-{category}")))
+                            .ghost()
                             .small()
-                            .checked(checked)
-                            .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                                this.filter_list(&preset, "groups", id, *checked, cx)
+                            .flex_1()
+                            .label(format!(
+                                "{} {category} {count} / {}",
+                                if expanded { "▾" } else { "▸" },
+                                ids.len()
+                            ))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if !this.expanded_categories.remove(&name) {
+                                    this.expanded_categories.insert(name.clone());
+                                }
+                                cx.notify();
                             })),
                     )
-            })
-            .collect();
+                    .child(
+                        Switch::new(SharedString::from(format!("category-all-{category}")))
+                            .small()
+                            .checked(count == ids.len())
+                            .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                                let checked = *checked;
+                                this.edit(
+                                    SettingsKind::User,
+                                    "overview",
+                                    "overviewProfilePresets",
+                                    |v| {
+                                        if let Some(p) =
+                                            v.get_mut(&preset_key).and_then(Value::as_object_mut)
+                                        {
+                                            let list = p
+                                                .entry("bytes:groups")
+                                                .or_insert_with(|| json!([]));
+                                            if let Some(list) = list.as_array_mut() {
+                                                list.retain(|v| {
+                                                    integer(v)
+                                                        .is_none_or(|id| !all_ids.contains(&id))
+                                                });
+                                                if checked {
+                                                    list.extend(all_ids.iter().map(|id| json!(id)));
+                                                }
+                                            }
+                                        }
+                                    },
+                                    cx,
+                                );
+                            })),
+                    )
+                    .into_any_element(),
+            );
+            if expanded {
+                for (id, name) in members {
+                    let checked = included.contains(&id);
+                    let preset = preset.clone();
+                    group_rows.push(
+                        h_flex()
+                            .pl_4()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_sm()
+                                    .child(format!("{name} ({id})")),
+                            )
+                            .child(
+                                Switch::new(SharedString::from(format!("filter-group-{id}")))
+                                    .small()
+                                    .checked(checked)
+                                    .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                                        this.filter_list(&preset, "groups", id, *checked, cx)
+                                    })),
+                            )
+                            .into_any_element(),
+                    );
+                }
+            }
+        }
         let state_rows: Vec<_> = overview::STATES
             .iter()
             .map(|(id, name)| {
@@ -743,41 +994,11 @@ impl DisplayEditor {
                     .label(t!("display.selectedGroupsOnly").to_string())
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.selected_groups_only = !this.selected_groups_only;
-                        this.group_page = 0;
                         cx.emit(DisplayChanged);
                         cx.notify();
                     })),
             )
             .children(group_rows)
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Button::new("groups-previous")
-                            .ghost()
-                            .small()
-                            .label("←")
-                            .disabled(page == 0)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.group_page = this.group_page.saturating_sub(1);
-                                cx.emit(DisplayChanged);
-                                cx.notify();
-                            })),
-                    )
-                    .child(format!("{} / {} · {}", page + 1, pages, groups.len()))
-                    .child(
-                        Button::new("groups-next")
-                            .ghost()
-                            .small()
-                            .label("→")
-                            .disabled(page + 1 >= pages)
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.group_page += 1;
-                                cx.emit(DisplayChanged);
-                                cx.notify();
-                            })),
-                    ),
-            )
             .child(ui::section_divider(
                 t!("display.stateFilters").to_string(),
                 None,
@@ -787,7 +1008,7 @@ impl DisplayEditor {
             .children(state_rows)
             .into_any_element()
     }
-    fn render_appearance(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_appearance(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let background = self.appearance_background;
         let style = if background { "background" } else { "flag" };
         let enabled_key = if background {
@@ -824,46 +1045,31 @@ impl DisplayEditor {
                     })
                     .unwrap_or_else(|| t!("display.defaultColor").to_string());
                 let color_key = key.clone();
-                let options = [
-                    "default", "FF3333", "FF9900", "FFFF33", "33CC33", "33CCCC", "3388FF",
-                    "AA44CC", "FFFFFF", "999999",
-                ]
-                .into_iter()
-                .map(|s| {
-                    (
-                        s.to_owned(),
-                        if s == "default" {
-                            t!("display.defaultColor").to_string()
-                        } else {
-                            format!("#{s}")
-                        },
-                    )
-                })
-                .collect();
-                let color_picker = self.picker(
-                    &format!("state-color-{id}"),
-                    hex,
-                    options,
-                    String::new(),
-                    move |this, choice, cx| {
+                let color_picker = self.color_control(
+                    &format!("state-{style}-{id}"),
+                    parse_color(&hex).map(|rgb| rgb.map(|c| c as f32)),
+                    window,
+                    move |this, color, cx| {
                         this.edit(
                             SettingsKind::User,
                             "overview",
                             "stateColors",
                             |v| {
-                                if let Some(map) = v.as_object_mut() {
-                                    if let Some(rgb) = parse_color(&choice) {
-                                        map.insert(
-                                            color_key.clone(),
-                                            json!({"tuple":[rgb[0],rgb[1],rgb[2],1.0]}),
-                                        );
-                                    } else {
-                                        map.remove(&color_key);
-                                    }
+                                if !v.is_object() {
+                                    *v = json!({});
+                                }
+                                let map = v.as_object_mut().unwrap();
+                                if let Some(rgb) = color {
+                                    map.insert(
+                                        color_key.clone(),
+                                        json!({"tuple":[rgb[0],rgb[1],rgb[2],1.]}),
+                                    );
+                                } else {
+                                    map.remove(&color_key);
                                 }
                             },
                             cx,
-                        )
+                        );
                     },
                     cx,
                 );
