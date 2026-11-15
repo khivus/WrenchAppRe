@@ -561,7 +561,7 @@ fn preview_tabs_sample_windows_chat_dividers_and_sorting_follow_the_selected_acc
         180
     );
     assert_eq!(
-        read(&files.account)["bytes:ui"]["bytes:chatinputsize_local"]["tuple"][1],
+        read(&files.account)["bytes:ui"]["bytes:chatinputsize_chatchannel_local"]["tuple"][1],
         40
     );
     assert_eq!(
@@ -726,6 +726,22 @@ fn stacked_chat_preview_switches_members_without_changing_saved_layout(cx: &mut 
         window.click("stack-preview-tab-bytes:999-bytes:chatchannel_fleet", cx);
         window.render_frame(cx);
         window.find("chat-preview-bytes:chatchannel_fleet");
+        assert!(editor.read(cx).settings_open);
+        assert_eq!(
+            editor.read(cx).settings.read(cx).selected_chat.as_deref(),
+            Some("chatchannel_fleet")
+        );
+        window.find("display-field-ChatWidth(\"fleet\")");
+        window.find("display-field-ChatInput(\"fleet\")");
+        window.click("layout-window-properties", cx);
+        window.render_frame(cx);
+        window.click("chat-preview-bytes:chatchannel_fleet", cx);
+        window.render_frame(cx);
+        assert!(editor.read(cx).settings_open);
+        assert_eq!(
+            editor.read(cx).settings.read(cx).selected_chat.as_deref(),
+            Some("chatchannel_fleet")
+        );
         assert!(
             window
                 .try_find("chat-preview-bytes:chatchannel_local")

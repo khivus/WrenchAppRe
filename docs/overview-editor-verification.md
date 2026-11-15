@@ -52,7 +52,12 @@ The automated checks use headless GPUI and synthetic DAT fixtures. Desktop appea
 ## Supported content, chat dividers and docked bookmarks
 
 - D-scan, fleet, watchlist, cargo/inventory, drones, probe scanner and selected-item windows retain editable geometry frames but no longer display fabricated internal content. Overview, chat, target, fighter and Neocom previews remain where internal configuration is supported.
-- Select a chat window → Chats. Change member-column width, message-field height and member visibility; confirm the preview updates and values survive Save account / Reload. Width and visibility now use the verified `chatchannel_<channel>_userlistwidth` and `_usermode` keys. Input sizing retains `chatinputsize_<channel>`.
+- Select a chat window → Chats. Change member-column width, message-field height and member visibility; confirm the preview updates and values survive Save account / Reload. Width and visibility now use the verified `chatchannel_<channel>_userlistwidth` and `_usermode` keys. Input sizing uses `chatinputsize_chatchannel_<channel>`.
 - Chat members should occupy the full right side. The bottom message field belongs only beneath the messages, not beneath the member list. Check small windows and hidden-member-list mode for clipping.
 - Switch to Station and Citadel scenes: the in-space standalone bookmarks window should disappear; the ordinary Locations window remains allowed. Return to Space to see bookmarks again.
 - Select multiple windows and all Overview sections, scroll long content, switch Window / element properties, and resize the app. Layout Save and account/character Save controls must remain within the editor. The resizable columns now occupy only the area above the fixed layout footer.
+
+## Chat stack selection and native input height
+
+- Click a tab in a stacked chat window: Chats must open for that tab, with member width and message height fields visible. Switch to Window properties, then click inside the chat body: Chats must open again for the displayed tab, without moving the stack.
+- Native input height is stored at `ui/chatinputsize_chatchannel_<channel>`. Existing erroneous short keys are ignored. Verify a saved 30-pixel local input is previewed as 30 pixels (scaled with the canvas), change the value, save/reload and inspect in EVE. The absent-setting preview fallback is now a 30-pixel single-line field.

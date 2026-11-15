@@ -459,7 +459,21 @@ impl LayoutEditor {
     fn select(&mut self, key: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         if key != self.selected || key.is_some() {
             self.selected = key;
-            let id = self.selected_window().map(|w| w.id().to_owned());
+            let id = self.selected_window().and_then(|state| {
+                if state.is_stack() {
+                    let members: Vec<_> = model::members(&self.windows, &state.key)
+                        .into_iter()
+                        .filter(|w| self.show_all_windows || self.active_window(w))
+                        .collect();
+                    members
+                        .iter()
+                        .find(|member| self.preview_stack_tabs.get(&state.key) == Some(&member.key))
+                        .or_else(|| members.first())
+                        .map(|member| member.id().to_owned())
+                } else {
+                    Some(state.id().to_owned())
+                }
+            });
             self.settings_open = false;
             if let Some(id) = id {
                 if id == "overview" || id.starts_with("overview_") {
@@ -1273,6 +1287,8 @@ mod tests {
             });
             window.render_frame(cx);
 
+            window.click("layout-window-properties", cx);
+            window.render_frame(cx);
             let search_bounds = window.find("layout-search").bounds();
             let actions_bounds = window.find("preview-hide-all").bounds();
             crate::scrolling::tests::check_vertical(&editor, |e| &mut e.list_scroll, window, cx);

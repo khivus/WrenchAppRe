@@ -671,3 +671,28 @@ fn docked_scenes_hide_in_space_bookmarks_but_allow_locations() {
     }
     assert!(Scene::Space.allows(&window("standaloneBookmarkWnd")));
 }
+
+#[test]
+fn chat_input_reads_native_full_window_key_and_ignores_obsolete_short_key() {
+    let file = Fixture::new("user", true);
+    let (mut root, crc) = crate::marshal::load_settings_json(&file.0).unwrap();
+    root["bytes:ui"]["bytes:chatinputsize_chatchannel_local"] = json!({"tuple":["long:1",30]});
+    root["bytes:ui"]["bytes:chatinputsize_local"] = json!({"tuple":["long:1",96]});
+    fs::write(&file.0, encode_settings_json(&root, crc).unwrap()).unwrap();
+    let mut doc = SettingsDocument::load(&file.0).unwrap();
+    assert_eq!(
+        chat::ChatLayout::read(Some(&doc), "chatchannel_local").input_height,
+        30
+    );
+    chat::ChatLayout::set(&mut doc, "local", "input", 40).unwrap();
+    assert_eq!(
+        doc.value("ui", "chatinputsize_chatchannel_local"),
+        Some(&json!(40))
+    );
+    assert_eq!(doc.value("ui", "chatinputsize_local"), Some(&json!(96)));
+    let (doc, _) = doc.save().unwrap();
+    assert_eq!(
+        chat::ChatLayout::read(Some(&doc), "chatchannel_local").input_height,
+        40
+    );
+}

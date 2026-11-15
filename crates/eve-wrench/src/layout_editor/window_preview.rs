@@ -725,9 +725,10 @@ impl LayoutEditor {
                                     })
                                     .cursor_pointer()
                                     .child(model::window_name(member.id()))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                    .on_click(cx.listener(move |this, _, window, cx| {
                                         cx.stop_propagation();
                                         this.preview_stack_tabs.insert(stack.clone(), key.clone());
+                                        this.select(Some(stack.clone()), window, cx);
                                         cx.notify();
                                     }))
                             })),
@@ -800,6 +801,16 @@ impl LayoutEditor {
                 base()
                     .id(SharedString::from(format!("chat-preview-{}", state.key)))
                     .test_support()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener({
+                            let key = state.key.clone();
+                            move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.select(Some(key.clone()), window, cx);
+                            }
+                        }),
+                    )
                     .child(
                         h_flex()
                             .flex_1()

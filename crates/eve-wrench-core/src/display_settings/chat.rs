@@ -1,4 +1,4 @@
-//! Member dividers use the full chatchannel_ window ID; input sizing uses the channel name. These
+//! Chat dividers and input sizing use the full chatchannel_ window ID. These
 //! dividers belong to settings.user.ui, not the character geometry file.
 use super::{SettingsDocument, boolean, integer};
 use serde_json::{Value, json};
@@ -48,9 +48,9 @@ impl ChatLayout {
                 .and_then(integer)
                 .unwrap_or(128)
                 .clamp(50, 200),
-            input_height: value(&format!("chatinputsize_{name}"))
+            input_height: value(&format!("chatinputsize_chatchannel_{name}"))
                 .and_then(integer)
-                .unwrap_or(64)
+                .unwrap_or(30)
                 .clamp(30, 96),
             show_members: value(&format!("chatchannel_{name}_usermode"))
                 .and_then(boolean)
@@ -69,7 +69,7 @@ impl ChatLayout {
         }
         let key = match field {
             "members" => format!("chatchannel_{name}_userlistwidth"),
-            "input" => format!("chatinputsize_{name}"),
+            "input" => format!("chatinputsize_chatchannel_{name}"),
             "visible" => format!("chatchannel_{name}_usermode"),
             _ => return Err("Unsupported chat divider".into()),
         };
