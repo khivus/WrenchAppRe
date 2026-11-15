@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.0-preview.2
+
+### Added
+
+- Move overview tabs between saved windows and reorder tabs within a window.
+- Browse expandable object-filter categories and select or deselect a whole category.
+- Customize ship-label visibility, order, formatting and colors with a visual preview.
+- Collapse windows to their headers while preserving their expanded size and position.
+- Optionally force the maximum 14.4 AU D-scan range when syncing account settings.
+
+### Changed
+
+- Overview previews show a configurable number of random objects, with actual ship types, character names for ships and subdued state background colors.
+- Keep the selected overview and settings category visible while scrolling, and distinguish tab settings from account-wide appearance settings.
+- Improve overview text clipping and column-fit examples. Remove unsupported mock contents while retaining editable window frames.
+- Update the confirmation catalog for newer EVE client dialogs.
+
+### Fixed
+
+- Correct friendly-state preview filtering and redraw immediately after wheel zoom.
+- Open chat controls from stacked windows and use the saved member width, visibility and message-field height.
+- Keep Save controls visible when switching windows and settings sections.
+- Match collapsed-header alignment and hide in-space bookmarks in docked scenes.
+- Portable Windows builds no longer require a separately installed VC++ runtime.
+
 ## 0.9.0-preview.1
 
 ### Added
