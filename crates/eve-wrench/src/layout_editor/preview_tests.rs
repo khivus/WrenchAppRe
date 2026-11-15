@@ -41,6 +41,7 @@ fn bulk_visibility_and_search_are_scoped_reversible_and_preview_only(cx: &mut Te
         locked: false,
         minimized: false,
         compact: None,
+        collapsed: None,
         light_background: None,
         stack: match id {
             "chatchannel_player_4321" | "chatchannel_player_9876" => Some("bytes:100".into()),

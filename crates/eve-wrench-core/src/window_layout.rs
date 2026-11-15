@@ -123,6 +123,7 @@ pub struct WindowState {
     pub minimized: bool,
     // None when the window has no entry and the client's default applies
     pub compact: Option<bool>,
+    pub collapsed: Option<bool>,
     pub light_background: Option<bool>,
     // Key of the stack this window is a tab in
     pub stack: Option<String>,
@@ -132,15 +133,17 @@ pub struct WindowState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Style {
     Compact,
+    Collapsed,
     LightBackground,
 }
 
 impl Style {
-    const ALL: [Style; 2] = [Style::Compact, Style::LightBackground];
+    const ALL: [Style; 3] = [Style::Compact, Style::Collapsed, Style::LightBackground];
 
     fn key(self) -> &'static str {
         match self {
             Style::Compact => COMPACT_KEY,
+            Style::Collapsed => "bytes:collapsedWindows",
             Style::LightBackground => LIGHT_BACKGROUND_KEY,
         }
     }
@@ -148,6 +151,7 @@ impl Style {
     fn get(self, window: &WindowState) -> Option<bool> {
         match self {
             Style::Compact => window.compact,
+            Style::Collapsed => window.collapsed,
             Style::LightBackground => window.light_background,
         }
     }
@@ -155,6 +159,7 @@ impl Style {
     fn set(self, window: &mut WindowState, on: Option<bool>) {
         match self {
             Style::Compact => window.compact = on,
+            Style::Collapsed => window.collapsed = on,
             Style::LightBackground => window.light_background = on,
         }
     }
@@ -253,6 +258,7 @@ fn layout_from_settings(root: &Value) -> Vec<WindowState> {
                 locked: false,
                 minimized: false,
                 compact: None,
+                collapsed: None,
                 light_background: None,
                 stack: None,
             })
@@ -702,5 +708,33 @@ mod tests {
         assert_eq!(read_window_layout(&path).unwrap(), layout);
 
         fs::remove_dir_all(&dir).ok();
+    }
+    #[test]
+    fn collapsed_state_round_trips_without_changing_expanded_geometry() {
+        let mut root = settings();
+        let mut windows = layout_from_settings(&root);
+        let original_rect = windows.iter().find(|w| w.id() == "overview").unwrap().rect;
+        windows
+            .iter_mut()
+            .find(|w| w.id() == "overview")
+            .unwrap()
+            .collapsed = Some(true);
+        layout_into_settings(&mut root, &windows).unwrap();
+        let encoded = encode_settings_json(&root, true).unwrap();
+        let decoded = blue_marshal::to_json(&blue_marshal::decode(&encoded).unwrap().value);
+        let mut reloaded = layout_from_settings(&decoded);
+        let window = reloaded.iter_mut().find(|w| w.id() == "overview").unwrap();
+        assert_eq!(window.collapsed, Some(true));
+        assert_eq!(window.rect, original_rect);
+        window.collapsed = Some(false);
+        layout_into_settings(&mut root, &reloaded).unwrap();
+        assert_eq!(
+            section(
+                root[WINDOWS_KEY].as_object().unwrap(),
+                "bytes:collapsedWindows"
+            )
+            .unwrap()["bytes:overview"],
+            json!(false)
+        );
     }
 }

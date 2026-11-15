@@ -471,6 +471,7 @@ layoutEditor:
   openFlag: "打开"
   locked: "锁定"
   minimized: "最小化"
+  collapsed: "折叠（仅标题栏）"
   compact: "紧凑模式"
   lightBackground: "浅色背景"
   category:

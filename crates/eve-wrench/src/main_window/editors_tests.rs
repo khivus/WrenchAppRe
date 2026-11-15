@@ -593,6 +593,7 @@ fn layout_tab_preserves_drafts_blocks_updates_and_syncs_only_characters(cx: &mut
         locked: false,
         minimized: false,
         compact: None,
+        collapsed: None,
         light_background: None,
         stack: None,
     };

@@ -526,6 +526,7 @@ fn station_citadel_and_fighter_scenes_stay_separate() {
         locked: false,
         minimized: false,
         compact: None,
+        collapsed: None,
         light_background: None,
         stack: None,
     };
@@ -557,6 +558,7 @@ fn missing_target_anchor_follows_selected_item_and_client_defaults() {
         locked: false,
         minimized: false,
         compact: None,
+        collapsed: None,
         light_background: None,
         stack: None,
     };
@@ -662,6 +664,7 @@ fn docked_scenes_hide_in_space_bookmarks_but_allow_locations() {
         locked: false,
         minimized: false,
         compact: None,
+        collapsed: None,
         light_background: None,
         stack: None,
     };

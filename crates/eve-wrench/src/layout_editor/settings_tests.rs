@@ -1172,3 +1172,69 @@ fn selecting_windows_and_overview_sections_keeps_save_controls_inside_the_editor
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn collapsed_toggle_previews_header_supports_undo_and_saves_expanded_size(cx: &mut TestAppContext) {
+    let (handle, editor, files) = setup(cx);
+    let original_account = std::fs::read(&files.account).unwrap();
+    let expanded = cx.update(|cx| {
+        editor
+            .read(cx)
+            .windows
+            .iter()
+            .find(|w| w.id() == "overview")
+            .unwrap()
+            .rect
+            .unwrap()
+    });
+    cx.update_window(handle, |_, window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.select(Some("bytes:overview".into()), window, cx)
+        });
+        window.render_frame(cx);
+        window.click("layout-window-properties", cx);
+        window.render_frame(cx);
+        let height = window.find("window-bytes:overview").bounds().size.height;
+        click("flag-collapsed", window, cx);
+        window.render_frame(cx);
+        assert!(window.find("window-bytes:overview").bounds().size.height < height);
+        assert!(
+            window
+                .try_find("overview-sample-bytes:overview-0")
+                .is_none()
+        );
+        assert_eq!(
+            editor
+                .read(cx)
+                .windows
+                .iter()
+                .find(|w| w.id() == "overview")
+                .unwrap()
+                .rect,
+            Some(expanded)
+        );
+        window.click("layout-undo", cx);
+        window.render_frame(cx);
+        assert_eq!(
+            window.find("window-bytes:overview").bounds().size.height,
+            height
+        );
+        window.click("layout-redo", cx);
+        window.render_frame(cx);
+        assert!(window.find("window-bytes:overview").bounds().size.height < height);
+        window.click("layout-save", cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let layout =
+        eve_wrench_core::window_layout::read_window_layout(std::path::Path::new(&files.character))
+            .unwrap();
+    let saved = layout
+        .windows
+        .iter()
+        .find(|w| w.id() == "overview")
+        .unwrap();
+    assert_eq!(saved.collapsed, Some(true));
+    assert_eq!(saved.rect.unwrap().height, expanded.height);
+    assert_eq!(std::fs::read(&files.account).unwrap(), original_account);
+}

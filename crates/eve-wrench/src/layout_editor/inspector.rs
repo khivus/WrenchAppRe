@@ -738,6 +738,40 @@ impl LayoutEditor {
                         |w, on| w.minimized = on,
                         cx,
                     ))
+                    .child(
+                        h_flex()
+                            .px_4()
+                            .py_1p5()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_sm()
+                                    .child(t!("layoutEditor.collapsed").to_string()),
+                            )
+                            .child(
+                                Switch::new("flag-collapsed")
+                                    .small()
+                                    .checked(window.collapsed.unwrap_or(false))
+                                    .on_click(cx.listener(|this, on: &bool, window, cx| {
+                                        let on = *on;
+                                        this.edit(window, cx, |this| {
+                                            if let Some(state) = this.selected_window() {
+                                                let owner = state
+                                                    .stack
+                                                    .clone()
+                                                    .unwrap_or_else(|| state.key.clone());
+                                                for state in &mut this.windows {
+                                                    if state.key == owner
+                                                        || state.stack.as_ref() == Some(&owner)
+                                                    {
+                                                        state.collapsed = Some(on);
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    })),
+                            ),
+                    )
                     .child(self.render_flag(
                         "flag-compact",
                         t!("layoutEditor.compact").to_string(),

@@ -1109,6 +1109,7 @@ mod tests {
                 locked: false,
                 minimized: false,
                 compact: None,
+                collapsed: None,
                 light_background: None,
                 stack: None,
             })
@@ -1217,6 +1218,7 @@ mod tests {
                 locked: false,
                 minimized: false,
                 compact: None,
+                collapsed: None,
                 light_background: None,
                 stack: None,
             })
@@ -1228,6 +1230,7 @@ mod tests {
             locked: false,
             minimized: false,
             compact: None,
+            collapsed: None,
             light_background: None,
             stack: None,
         });
@@ -1238,6 +1241,7 @@ mod tests {
             locked: false,
             minimized: false,
             compact: None,
+            collapsed: None,
             light_background: None,
             stack: Some("bytes:100".into()),
         }));

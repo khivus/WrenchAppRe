@@ -475,6 +475,7 @@ mod tests {
             locked: false,
             minimized: false,
             compact: None,
+            collapsed: None,
             light_background: None,
             stack: stack.map(str::to_string),
         }

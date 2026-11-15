@@ -234,6 +234,7 @@ mod tests {
             locked: false,
             minimized: false,
             compact: None,
+            collapsed: None,
             light_background: None,
             stack: None,
         }

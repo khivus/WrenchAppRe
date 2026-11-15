@@ -275,7 +275,12 @@ impl LayoutEditor {
     }
 
     fn preview_rect(&self, key: &str, mut rect: WindowRect, _mapping: Mapping) -> WindowRect {
-        if self.activity.collapsed.contains(key) {
+        if self
+            .windows
+            .iter()
+            .find(|w| w.key == key)
+            .is_some_and(|w| w.collapsed == Some(true))
+        {
             rect.height = (TITLE_HEIGHT + 2.) as i64;
         }
         rect
@@ -334,7 +339,7 @@ impl LayoutEditor {
         let selected = self.selected.as_deref() == Some(state.key.as_str());
         let hovered = self.hovered.as_deref() == Some(state.key.as_str());
         let mut bounds = mapping.rect(&state.rect.expect("windows on the canvas have a rect"));
-        let collapsed = self.activity.collapsed.contains(&state.key);
+        let collapsed = state.collapsed.unwrap_or(false);
         if collapsed {
             bounds.size.height = px((TITLE_HEIGHT + 2.) * mapping.scale);
         }

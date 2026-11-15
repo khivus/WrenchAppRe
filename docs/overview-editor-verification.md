@@ -61,3 +61,10 @@ The automated checks use headless GPUI and synthetic DAT fixtures. Desktop appea
 
 - Click a tab in a stacked chat window: Chats must open for that tab, with member width and message height fields visible. Switch to Window properties, then click inside the chat body: Chats must open again for the displayed tab, without moving the stack.
 - Native input height is stored at `ui/chatinputsize_chatchannel_<channel>`. Existing erroneous short keys are ignored. Verify a saved 30-pixel local input is previewed as 30 pixels (scaled with the canvas), change the value, save/reload and inspect in EVE. The absent-setting preview fallback is now a 30-pixel single-line field.
+
+## Collapsed header state
+
+- Select a window and open Window properties → Collapsed (header only). Only its title bar should remain; collapse is distinct from minimizing or closing the window. Toggle off to recover the same expanded dimensions.
+- Drag a collapsed header: it should move using its visible header bounds while preserving the expanded width/height. Expanded-size fields remain editable in the inspector; resize handles are hidden on the collapsed preview.
+- Check undo/redo, reset/discard, Save layout and reopen the editor. The `windows/collapsedWindows` flag must persist in the character DAT with unrelated settings and expanded geometry preserved. Account settings are unaffected.
+- Repeat with a stacked chat window: stack and member aliases should share the collapse state, and expanding should restore its contents. Live EVE acceptance remains a manual check.
