@@ -14,6 +14,8 @@ pub struct Config {
     pub custom_eve_path: Option<String>,
     #[serde(default = "default_true")]
     pub auto_backup: bool,
+    #[serde(default)]
+    pub force_dscan_max_range: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<ThemePreference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -91,6 +93,7 @@ impl Default for Config {
         Self {
             custom_eve_path: None,
             auto_backup: true,
+            force_dscan_max_range: false,
             theme: None,
             locale: None,
             default_sources: DefaultSources::default(),
@@ -149,6 +152,7 @@ mod tests {
     fn auto_backup_defaults_on() {
         let config: Config = serde_json::from_str("{}").unwrap();
         assert!(config.auto_backup);
+        assert!(!config.force_dscan_max_range);
         assert!(config.drone_group_pattern.is_none());
         assert!(!config.default_sources.has_any());
         for group in crate::copy::COPY_GROUPS {

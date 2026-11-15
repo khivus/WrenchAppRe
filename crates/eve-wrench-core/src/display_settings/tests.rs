@@ -570,3 +570,72 @@ fn missing_target_anchor_follows_selected_item_and_client_defaults() {
     assert!(default_states(true).contains(&51));
     assert!(default_blink(false, 51));
 }
+
+#[test]
+fn moving_overview_tabs_preserves_identity_unknown_fields_and_saved_order() {
+    let file = Fixture::new("user", true);
+    let mut doc = SettingsDocument::load(&file.0).unwrap();
+    let original = doc.value("overview", "tabsettings_new").unwrap()["int:0"].clone();
+    doc.set(
+        "overview",
+        "tabsettings_new",
+        json!({"int:0":original,"int:4":original,"int:9":original}),
+    )
+    .unwrap();
+    let definitions = doc.value("overview", "tabsettings_new").cloned();
+    place_tab(&mut doc, 9, 0, 0).unwrap();
+    assert_eq!(
+        assigned_tabs(&doc, 0)
+            .iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>(),
+        [9, 0, 4]
+    );
+    place_tab(&mut doc, 0, 2, 0).unwrap();
+    assert_eq!(
+        assigned_tabs(&doc, 0)
+            .iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>(),
+        [9, 4]
+    );
+    assert_eq!(assigned_tabs(&doc, 2)[0].id, 0);
+    assert_eq!(
+        doc.value("overview", "tabsettings_new"),
+        definitions.as_ref()
+    );
+    let before = doc.value("overview", "tabsByWindowInstanceID").cloned();
+    assert!(place_tab(&mut doc, 999, 0, 0).is_err());
+    assert_eq!(
+        doc.value("overview", "tabsByWindowInstanceID"),
+        before.as_ref()
+    );
+    let (doc, _) = doc.save().unwrap();
+    assert_eq!(assigned_tabs(&doc, 2)[0].id, 0);
+}
+
+#[test]
+fn overview_categories_include_ships_without_inventory_blueprints() {
+    let categories = categories();
+    assert!(
+        categories
+            .iter()
+            .find(|(name, _)| name == "Ship")
+            .unwrap()
+            .1
+            .contains(&27)
+    );
+    assert!(
+        categories
+            .iter()
+            .find(|(name, _)| name == "Celestial")
+            .unwrap()
+            .1
+            .contains(&6)
+    );
+    assert!(
+        !categories
+            .iter()
+            .any(|(name, _)| name.contains("Blueprint"))
+    );
+}

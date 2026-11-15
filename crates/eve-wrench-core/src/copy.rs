@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::backups::auto_backup;
 use crate::marshal::{encode_settings_json, load_settings_json, strip_type_prefix};
@@ -271,7 +271,7 @@ pub fn copy_settings_selective(
     excluded_groups: &[&str],
     backup: bool,
 ) -> Result<usize, String> {
-    copy_settings_impl(source, targets, excluded_groups, backup, false, None)
+    copy_settings_impl(source, targets, excluded_groups, backup, false, None, false)
 }
 
 /// Copies only these sections, leaving all other target data untouched.
@@ -281,7 +281,7 @@ pub fn copy_settings_groups(
     groups: &[&str],
     backup: bool,
 ) -> Result<usize, String> {
-    copy_settings_impl(source, targets, groups, backup, true, None)
+    copy_settings_impl(source, targets, groups, backup, true, None, false)
 }
 
 /// Syncs drone definitions using the editor's explicit Append/Replace choice.
@@ -291,7 +291,40 @@ pub fn sync_drone_groups(
     mode: crate::drone_groups::DroneSaveMode,
     backup: bool,
 ) -> Result<usize, String> {
-    copy_settings_impl(source, targets, &["drone_groups"], backup, true, Some(mode))
+    copy_settings_impl(
+        source,
+        targets,
+        &["drone_groups"],
+        backup,
+        true,
+        Some(mode),
+        false,
+    )
+}
+
+/// Normal settings sync with the optional EVE maximum D-scan override.
+pub fn copy_settings_with_dscan(
+    source: &Path,
+    targets: &[String],
+    excluded: &[&str],
+    backup: bool,
+    force_max: bool,
+) -> Result<usize, String> {
+    copy_settings_impl(source, targets, excluded, backup, false, None, force_max)
+}
+
+fn force_dscan_range(root: &mut Value) {
+    let Some(root) = root.as_object_mut() else {
+        return;
+    };
+    let ui_key = find_section_key(root, "ui");
+    let ui = root.entry(ui_key).or_insert_with(|| json!({}));
+    if let Some(ui) = ui.as_object_mut() {
+        ui.insert(
+            "bytes:dir_scanrange".into(),
+            json!({"tuple": [format!("long:{}", crate::marshal::filetime_now()), 2147483647.0]}),
+        );
+    }
 }
 
 fn copy_settings_impl(
@@ -301,6 +334,7 @@ fn copy_settings_impl(
     backup: bool,
     only_selected: bool,
     drone_mode: Option<crate::drone_groups::DroneSaveMode>,
+    force_max_dscan: bool,
 ) -> Result<usize, String> {
     let (source_json, _) = load_settings_json(source)?;
     let now = filetime::FileTime::now();
@@ -347,6 +381,12 @@ fn copy_settings_impl(
             && crate::drone_groups::preserve_assignments(&mut result, &target_json).is_err()
         {
             continue;
+        }
+        if force_max_dscan
+            && crate::scan::parse_core_filename(source)
+                .is_ok_and(|(kind, _)| kind == SettingsKind::User)
+        {
+            force_dscan_range(&mut result);
         }
         let Ok(bytes) = encode_settings_json(&result, had_crc) else {
             continue;
@@ -407,6 +447,52 @@ fn preserve_contract_filters(result: &mut Value, target: &Value) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn dscan_override_is_opt_in_user_only_and_preserves_target_crc_and_backups() {
+        let dir = std::env::temp_dir().join(format!(
+            "wrench-dscan-{}-{}",
+            std::process::id(),
+            crate::marshal::filetime_now()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for kind in ["user", "char"] {
+            let source = dir.join(format!("core_{kind}_1.dat"));
+            let target = dir.join(format!("core_{kind}_2.dat"));
+            let root = json!({"bytes:ui": {"bytes:dir_scanrange": {"tuple":["long:1", 2139321031.0]}, "bytes:future": {"tuple":["long:1", "utf8:keep"]}}});
+            let original = encode_settings_json(&root, false).unwrap();
+            std::fs::write(&source, encode_settings_json(&root, true).unwrap()).unwrap();
+            std::fs::write(&target, &original).unwrap();
+            let targets = [target.to_string_lossy().into_owned()];
+            copy_settings_with_dscan(&source, &targets, &[], false, false).unwrap();
+            assert_eq!(load_settings_json(&target).unwrap().0, root);
+            assert_eq!(
+                copy_settings_with_dscan(&source, &targets, &[], true, true).unwrap(),
+                1
+            );
+            let (result, crc) = load_settings_json(&target).unwrap();
+            assert!(!crc);
+            assert_eq!(
+                result["bytes:ui"]["bytes:future"],
+                root["bytes:ui"]["bytes:future"]
+            );
+            assert_eq!(
+                result["bytes:ui"]["bytes:dir_scanrange"]["tuple"][1],
+                if kind == "user" {
+                    json!(2147483647.0)
+                } else {
+                    json!(2139321031.0)
+                }
+            );
+            assert_eq!(
+                std::fs::read(&source).unwrap(),
+                encode_settings_json(&root, true).unwrap()
+            );
+        }
+        let resolved = dir.canonicalize().unwrap();
+        assert!(resolved.starts_with(std::env::temp_dir().canonicalize().unwrap()));
+        std::fs::remove_dir_all(resolved).unwrap();
+    }
 
     #[test]
     fn contract_owner_is_reset_without_removing_other_contract_preferences() {

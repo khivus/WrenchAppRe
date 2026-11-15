@@ -16,6 +16,48 @@ pub fn group_catalog() -> &'static [(i64, String)] {
     })
 }
 
+/// Categories from the bundled, researched overview catalog. Unknown saved
+/// groups remain available separately in the editor.
+pub fn categories() -> Vec<(String, Vec<i64>)> {
+    let data: Value =
+        serde_json::from_str(include_str!("../../../../assets/overview-categories.json"))
+            .expect("bundled categories");
+    let mut categories: Vec<_> = data["categories"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(_, v)| Some((v["name"].as_str()?.to_owned(), ids(v.get("groups")))))
+        .collect();
+    categories.sort_by(|a, b| a.0.cmp(&b.0));
+    categories
+}
+
+/// Materialize the implicit main-window assignment before moving or ordering a
+/// tab. IDs stay stable: widths, sorting and preset references still belong to
+/// the same tab after reordering.
+pub fn place_tab(
+    doc: &mut SettingsDocument,
+    tab: i64,
+    instance: usize,
+    position: usize,
+) -> Result<(), String> {
+    if instance >= 32 || !tabs(doc).iter().any(|t| t.id == tab) {
+        return Err("Invalid overview window or tab".into());
+    }
+    let mut placements: Vec<Vec<i64>> = match doc.value("overview", "tabsByWindowInstanceID") {
+        Some(Value::Array(rows)) => rows.iter().map(|v| ids(Some(v))).collect(),
+        None => vec![tabs(doc).iter().map(|t| t.id).collect()],
+        _ => return Err("Unsupported overview window assignments".into()),
+    };
+    placements.resize_with(placements.len().max(instance + 1), Vec::new);
+    for row in &mut placements {
+        row.retain(|id| *id != tab);
+    }
+    let row = &mut placements[instance];
+    row.insert(position.min(row.len()), tab);
+    doc.set("overview", "tabsByWindowInstanceID", json!(placements))
+}
+
 pub const COLUMNS: &[(&str, &str, i64)] = &[
     ("ICON", "Icon", 28),
     ("DISTANCE", "Distance", 80),
