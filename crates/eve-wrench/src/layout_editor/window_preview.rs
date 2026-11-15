@@ -111,6 +111,46 @@ fn matches_preset(object: &GridObject, groups: &[i64], hidden: &[i64], always: &
         && (object.states.iter().any(|id| always.contains(id))
             || !object.states.iter().any(|id| hidden.contains(id)))
 }
+fn is_player_ship(group: i64) -> bool {
+    static SHIPS: std::sync::OnceLock<std::collections::HashSet<i64>> = std::sync::OnceLock::new();
+    SHIPS
+        .get_or_init(|| {
+            overview::categories()
+                .into_iter()
+                .filter(|(name, _)| name == "Ship")
+                .flat_map(|(_, ids)| ids)
+                .collect()
+        })
+        .contains(&group)
+}
+// Relationship/security flags supplement a standing, never replace it.
+fn ship_states(primary: i64) -> Vec<i64> {
+    if [15, 16, 17, 18, 19, 48].contains(&primary) {
+        vec![primary]
+    } else {
+        vec![primary, 48]
+    }
+}
+fn preview_name(object: &GridObject, characters: &[String], seed: u64) -> String {
+    if !is_player_ship(object.group) {
+        return object.kind.clone();
+    }
+    if characters.is_empty() {
+        return grid_cell(object, "NAME");
+    }
+    characters[(random_key(seed) as usize % characters.len() + object.variant) % characters.len()]
+        .clone()
+}
+// Blend over the dark game backdrop instead of painting a solid RGB stripe.
+fn muted_background(color: Rgba, alpha: f32) -> Rgba {
+    let opacity = 0.22 * alpha.clamp(0., 1.);
+    Rgba {
+        r: 0.031 + (color.r - 0.031) * opacity,
+        g: 0.031 + (color.g - 0.031) * opacity,
+        b: 0.031 + (color.b - 0.031) * opacity,
+        a: 1.,
+    }
+}
 fn grid_cell(object: &GridObject, column: &str) -> String {
     match column {
         "TYPE" => object.kind.clone(),
@@ -165,23 +205,32 @@ fn background_color(
         .and_then(serde_json::Value::as_array)
         .filter(|a| a.len() >= 3)
     {
-        return Some(rgb(((color[0].as_f64().unwrap_or(0.) * 255.).round()
-            as u32)
-            << 16
-            | ((color[1].as_f64().unwrap_or(0.) * 255.).round() as u32) << 8
-            | (color[2].as_f64().unwrap_or(0.) * 255.).round() as u32));
+        return Some(muted_background(
+            rgb(
+                ((color[0].as_f64().unwrap_or(0.) * 255.).round() as u32) << 16
+                    | ((color[1].as_f64().unwrap_or(0.) * 255.).round() as u32) << 8
+                    | (color[2].as_f64().unwrap_or(0.) * 255.).round() as u32,
+            ),
+            color
+                .get(3)
+                .and_then(serde_json::Value::as_f64)
+                .unwrap_or(1.) as f32,
+        ));
     }
-    Some(rgb(match state {
-        11 => 0x800080,
-        12 | 66 => 0x008000,
-        14 => 0x0080ff,
-        15 => 0x0000ff,
-        16 => 0x8080ff,
-        13 | 44 | 19 | 51 => 0xff0000,
-        18 => 0xff8000,
-        50 | 52 => 0xffff00,
-        _ => 0x808080,
-    }))
+    Some(muted_background(
+        rgb(match state {
+            11 => 0x800080,
+            12 | 66 => 0x008000,
+            14 => 0x0080ff,
+            15 => 0x0000ff,
+            16 => 0x8080ff,
+            13 | 44 | 19 | 51 => 0xff0000,
+            18 => 0xff8000,
+            50 | 52 => 0xffff00,
+            _ => 0x808080,
+        }),
+        1.,
+    ))
 }
 fn sampled_objects(
     groups: &[i64],
@@ -204,7 +253,11 @@ fn sampled_objects(
     let mut states: Vec<_> = overview::STATES
         .iter()
         .map(|(id, _)| *id)
-        .filter(|id| !hidden.contains(id) || always.contains(id))
+        .filter(|id| {
+            let states = ship_states(*id);
+            states.iter().any(|id| always.contains(id))
+                || !states.iter().any(|id| hidden.contains(id))
+        })
         .collect();
     states.sort_by_cached_key(|id| random_key(*id as u64 ^ seed));
     // Prefer enabled backgrounds, with one state for each distinct color first.
@@ -230,24 +283,39 @@ fn sampled_objects(
     } else {
         &distinct
     };
-    if groups.is_empty() || choices.is_empty() {
+    if choices.is_empty() {
+        groups.retain(|group| !is_player_ship(*group));
+    }
+    if groups.is_empty() {
         return Vec::new();
     }
+    let fallback = [48];
+    let choices = if choices.is_empty() {
+        &fallback[..]
+    } else {
+        choices.as_slice()
+    };
     let mut result = Vec::new();
     let mut used = std::collections::HashSet::new();
     for i in 0..count.clamp(1, 50) * 50 {
         let group = groups[i % groups.len()];
         let names = &types[&group];
+        let round = i / groups.len();
         let kind = names[(random_key(group as u64 ^ seed) as usize % names.len()
-            + i / groups.len())
+            + round / choices.len()
+            + round % choices.len())
             % names.len()]
         .clone();
-        let state = choices[i % choices.len()];
+        let state = choices[(i % groups.len() + round) % choices.len()];
         if used.insert((kind.clone(), state)) {
             result.push(GridObject {
                 group,
                 kind,
-                states: vec![state],
+                states: if is_player_ship(group) {
+                    ship_states(state)
+                } else {
+                    Vec::new()
+                },
                 variant: i,
             });
             if result.len() >= count.clamp(1, 50) {
@@ -453,6 +521,12 @@ impl LayoutEditor {
                     })
                     .map(|(_, value)| value)
             });
+        if preset.is_none() {
+            return Some(
+                body.child(line("Filter preset unavailable in this account", scale))
+                    .into_any_element(),
+            );
+        }
         let groups = overview::ids(preset.and_then(|p| p.get("bytes:groups")));
         let hidden = overview::ids(preset.and_then(|p| p.get("bytes:filteredStates")));
         let always = overview::ids(preset.and_then(|p| p.get("bytes:alwaysShownStates")));
@@ -539,18 +613,34 @@ impl LayoutEditor {
             .data()
             .map(|data| {
                 data.entries()
+                    .filter(|entry| entry.kind == SettingsKind::Char)
                     .filter_map(|entry| {
                         entry
                             .character
                             .as_ref()
-                            .map(|character| character.name.clone())
+                            .map(|c| c.name.clone())
+                            .or_else(|| {
+                                let name = entry.display_name.trim();
+                                (!name.is_empty()
+                                    && name != entry.id
+                                    && !name.chars().all(|c| c.is_ascii_digit()))
+                                .then(|| name.to_owned())
+                            })
                     })
                     .filter(|name| !name.is_empty())
                     .collect()
             })
             .unwrap_or_default();
+        // Stable per-overview permutation: zooming must not reshuffle pilots.
         character_names.sort();
         character_names.dedup();
+        let name_seed = tab.id as u64 ^ (instance as u64).wrapping_mul(0x9e3779b9);
+        character_names.sort_by_cached_key(|name| {
+            use std::hash::{Hash, Hasher};
+            let mut hash = std::collections::hash_map::DefaultHasher::new();
+            name.hash(&mut hash);
+            random_key(hash.finish() ^ name_seed)
+        });
         let limit = count;
         for (index, object) in objects.into_iter().take(limit).enumerate() {
             body = body.child(
@@ -572,8 +662,8 @@ impl LayoutEditor {
                         .unwrap_or(rgb(0x080808)))
                     .children(columns.iter().map(|(c, w)| {
                         cell(
-                            if c == "NAME" && !character_names.is_empty() {
-                                character_names[object.variant % character_names.len()].clone()
+                            if c == "NAME" {
+                                preview_name(&object, &character_names, name_seed)
                             } else {
                                 grid_cell(&object, c)
                             },
@@ -892,6 +982,48 @@ impl LayoutEditor {
 #[cfg(test)]
 mod grid_tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn friendly_samples_do_not_bypass_standing_exclusions_with_security_flags() {
+        let hidden = [17, 18, 19, 48];
+        let always = [11, 12, 14, 15, 16];
+        let rows = sampled_objects(&[30], &hidden, &always, false, 50, 4, None);
+        assert!(rows.len() >= 5 && rows.len() <= 50);
+        assert!(
+            rows.iter()
+                .all(|o| o.states.iter().any(|id| always.contains(id)))
+        );
+        for state in [9, 10, 50, 51, 52, 53] {
+            let object = GridObject {
+                group: 30,
+                kind: "Avatar".into(),
+                states: ship_states(state),
+                variant: 0,
+            };
+            assert!(!matches_preset(&object, &[30], &hidden, &always));
+        }
+    }
+    #[::core::prelude::v1::test]
+    fn character_names_are_ship_only_and_backgrounds_are_dimmed() {
+        let names = vec!["Pilot A".to_owned(), "Pilot B".to_owned()];
+        let mut object = GridObject {
+            group: 30,
+            kind: "Avatar".into(),
+            states: vec![11],
+            variant: 0,
+        };
+        assert!(names.contains(&preview_name(&object, &names, 5)));
+        assert_eq!(
+            preview_name(&object, &names, 5),
+            preview_name(&object, &names, 5)
+        );
+        object.group = 15;
+        object.kind = "Caldari Navy Assembly Plant".into();
+        assert_eq!(preview_name(&object, &names, 5), object.kind);
+        let color = muted_background(rgb(0xff0000), 1.);
+        assert!(color.r < 0.3 && color.r > color.g);
+        let transparent = muted_background(rgb(0xff0000), 0.);
+        assert!((transparent.r - 0.031).abs() < 0.001);
+    }
     #[::core::prelude::v1::test]
     fn sampled_grid_is_small_stable_and_uses_actual_filtered_types() {
         let a = sampled_objects(&[30], &[], &[], false, 5, 123, None);
