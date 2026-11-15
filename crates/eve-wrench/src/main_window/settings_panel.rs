@@ -1,6 +1,7 @@
 use eve_wrench_core::updates::{APP_VERSION, is_preview_version};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _, Theme, ThemeMode, h_flex, v_flex,
@@ -157,6 +158,41 @@ impl Render for SettingsPanel {
                     ),
             )
             .child(Self::section(t!("extra.title").to_string(), cx))
+            .child(
+                Self::row(cx)
+                    .child(div().flex_1().child("Overview sample rows"))
+                    .child(
+                        Button::new("overview-preview-rows")
+                            .outline()
+                            .small()
+                            .label(config.overview_preview_rows.clamp(1, 50).to_string())
+                            .dropdown_menu({
+                                let store = self.store.clone();
+                                move |menu, _, _| {
+                                    [1usize, 3, 5, 10, 15, 20, 30, 50].into_iter().fold(
+                                        menu,
+                                        |menu, count| {
+                                            let store = store.clone();
+                                            menu.item(
+                                                PopupMenuItem::new(count.to_string())
+                                                    .checked(config.overview_preview_rows == count)
+                                                    .on_click(move |_, _, cx| {
+                                                        store
+                                                            .update(cx, |store, cx| {
+                                                                store.update_config(cx, |config| {
+                                                                    config.overview_preview_rows =
+                                                                        count
+                                                                })
+                                                            })
+                                                            .ok();
+                                                    }),
+                                            )
+                                        },
+                                    )
+                                }
+                            }),
+                    ),
+            )
             .child(
                 Self::row(cx)
                     .child(

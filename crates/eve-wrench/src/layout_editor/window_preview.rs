@@ -64,7 +64,7 @@ fn sample(column: &str, index: usize) -> String {
     }
 }
 
-// One cached object per eligible group and relationship scenario. No captured
+// One cached representative per eligible group; sample states only for visible rows. No captured
 // player names, ship identities, locations or display measurements enter it.
 #[derive(Clone)]
 struct GridObject {
@@ -96,17 +96,12 @@ fn grid() -> &'static [GridObject] {
                         .unwrap_or("Unknown object"),
                 }
                 .to_owned();
-                overview::STATES
-                    .iter()
-                    .map(|(id, _)| vec![*id])
-                    .chain([vec![11, 16], vec![12, 16], vec![14, 16]])
-                    .enumerate()
-                    .map(move |(variant, states)| GridObject {
-                        group,
-                        kind: kind.clone(),
-                        states,
-                        variant,
-                    })
+                [GridObject {
+                    group,
+                    kind,
+                    states: vec![17],
+                    variant: 0,
+                }]
             })
             .collect()
     })
@@ -129,6 +124,138 @@ fn grid_cell(object: &GridObject, column: &str) -> String {
             .into(),
         _ => sample(column, object.variant % 5),
     }
+}
+
+fn random_key(value: u64) -> u64 {
+    static SEED: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    let seed = *SEED.get_or_init(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64
+    });
+    let mut x = value ^ seed;
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
+    x ^ (x >> 31)
+}
+fn type_catalog() -> &'static std::collections::HashMap<i64, Vec<String>> {
+    static TYPES: std::sync::OnceLock<std::collections::HashMap<i64, Vec<String>>> =
+        std::sync::OnceLock::new();
+    TYPES.get_or_init(|| {
+        serde_json::from_str(include_str!("../../../../assets/overview-types.json"))
+            .expect("bundled EVE types")
+    })
+}
+fn background_color(
+    doc: Option<&eve_wrench_core::display_settings::SettingsDocument>,
+    state: i64,
+) -> Option<Rgba> {
+    let enabled = doc
+        .and_then(|d| d.value("overview", "backgroundStates2"))
+        .map(|v| overview::ids(Some(v)))
+        .unwrap_or_else(|| overview::default_states(true).to_vec());
+    if !enabled.contains(&state) {
+        return None;
+    }
+    if let Some(color) = doc
+        .and_then(|d| d.value("overview", "stateColors"))
+        .and_then(|v| v.get(overview::color_key("background", state)))
+        .and_then(|v| v.get("tuple"))
+        .and_then(serde_json::Value::as_array)
+        .filter(|a| a.len() >= 3)
+    {
+        return Some(rgb(((color[0].as_f64().unwrap_or(0.) * 255.).round()
+            as u32)
+            << 16
+            | ((color[1].as_f64().unwrap_or(0.) * 255.).round() as u32) << 8
+            | (color[2].as_f64().unwrap_or(0.) * 255.).round() as u32));
+    }
+    Some(rgb(match state {
+        11 => 0x800080,
+        12 | 66 => 0x008000,
+        14 => 0x0080ff,
+        15 => 0x0000ff,
+        16 => 0x8080ff,
+        13 | 44 | 19 | 51 => 0xff0000,
+        18 => 0xff8000,
+        50 | 52 => 0xffff00,
+        _ => 0x808080,
+    }))
+}
+fn sampled_objects(
+    groups: &[i64],
+    hidden: &[i64],
+    always: &[i64],
+    all: bool,
+    count: usize,
+    seed: u64,
+    doc: Option<&eve_wrench_core::display_settings::SettingsDocument>,
+) -> Vec<GridObject> {
+    let types = type_catalog();
+    let mut groups: Vec<_> = grid()
+        .iter()
+        .filter(|o| {
+            (all || groups.contains(&o.group)) && types.get(&o.group).is_some_and(|v| !v.is_empty())
+        })
+        .map(|o| o.group)
+        .collect();
+    groups.sort_by_cached_key(|g| random_key(*g as u64 ^ seed));
+    let mut states: Vec<_> = overview::STATES
+        .iter()
+        .map(|(id, _)| *id)
+        .filter(|id| !hidden.contains(id) || always.contains(id))
+        .collect();
+    states.sort_by_cached_key(|id| random_key(*id as u64 ^ seed));
+    // Prefer enabled backgrounds, with one state for each distinct color first.
+    let colored: Vec<_> = states
+        .iter()
+        .copied()
+        .filter(|id| background_color(doc, *id).is_some())
+        .collect();
+    let mut colors = std::collections::HashSet::new();
+    let distinct: Vec<_> = colored
+        .into_iter()
+        .filter(|id| {
+            let c = background_color(doc, *id).unwrap();
+            colors.insert((
+                (c.r * 255.).round() as u32,
+                (c.g * 255.).round() as u32,
+                (c.b * 255.).round() as u32,
+            ))
+        })
+        .collect();
+    let choices = if distinct.is_empty() {
+        &states
+    } else {
+        &distinct
+    };
+    if groups.is_empty() || choices.is_empty() {
+        return Vec::new();
+    }
+    let mut result = Vec::new();
+    let mut used = std::collections::HashSet::new();
+    for i in 0..count.clamp(1, 50) * 50 {
+        let group = groups[i % groups.len()];
+        let names = &types[&group];
+        let kind = names[(random_key(group as u64 ^ seed) as usize % names.len()
+            + i / groups.len())
+            % names.len()]
+        .clone();
+        let state = choices[i % choices.len()];
+        if used.insert((kind.clone(), state)) {
+            result.push(GridObject {
+                group,
+                kind,
+                states: vec![state],
+                variant: i,
+            });
+            if result.len() >= count.clamp(1, 50) {
+                break;
+            }
+        }
+    }
+    result
 }
 
 impl LayoutEditor {
@@ -353,23 +480,35 @@ impl LayoutEditor {
         };
         let structures = option("applyToStructures");
         let others = option("applyToOtherObjects");
-        let mut objects: Vec<_> = grid()
-            .iter()
-            .filter(|o| {
-                let apply = match policies.get(&o.group) {
-                    Some(0) => true,
-                    Some(1) => structures,
-                    _ => others,
-                };
-                preset.is_none()
-                    || matches_preset(
-                        o,
-                        &groups,
-                        if apply { &hidden } else { &[] },
-                        if apply { &always } else { &[] },
-                    )
-            })
-            .collect();
+        let count = self
+            .store
+            .read(cx)
+            .config()
+            .overview_preview_rows
+            .clamp(1, 50);
+        let mut objects = sampled_objects(
+            &groups,
+            &hidden,
+            &always,
+            preset.is_none(),
+            count,
+            tab.id as u64 ^ instance as u64,
+            self.preview_settings.doc(SettingsKind::User),
+        );
+        objects.retain(|o| {
+            let apply = match policies.get(&o.group) {
+                Some(0) => true,
+                Some(1) => structures,
+                _ => others,
+            };
+            preset.is_none()
+                || matches_preset(
+                    o,
+                    &groups,
+                    if apply { &hidden } else { &[] },
+                    if apply { &always } else { &[] },
+                )
+        });
         if let Some((column, ascending)) = &sort {
             objects.sort_by_cached_key(|object| {
                 let numeric = match column.as_str() {
@@ -412,11 +551,7 @@ impl LayoutEditor {
             .unwrap_or_default();
         character_names.sort();
         character_names.dedup();
-        let limit = state
-            .rect
-            .map(|rect| (rect.height.max(0) as usize / 16).saturating_add(1))
-            .unwrap_or(20)
-            .min(256);
+        let limit = count;
         for (index, object) in objects.into_iter().take(limit).enumerate() {
             body = body.child(
                 h_flex()
@@ -428,17 +563,19 @@ impl LayoutEditor {
                     .h(px(16.2 * scale))
                     .flex_none()
                     .overflow_hidden()
-                    .bg(if index % 2 == 0 {
-                        cx.theme().muted.opacity(0.2)
-                    } else {
-                        transparent_black()
-                    })
+                    .bg(object
+                        .states
+                        .first()
+                        .and_then(|id| {
+                            background_color(self.preview_settings.doc(SettingsKind::User), *id)
+                        })
+                        .unwrap_or(rgb(0x080808)))
                     .children(columns.iter().map(|(c, w)| {
                         cell(
                             if c == "NAME" && !character_names.is_empty() {
                                 character_names[object.variant % character_names.len()].clone()
                             } else {
-                                grid_cell(object, c)
+                                grid_cell(&object, c)
                             },
                             *w as f32,
                             scale,
@@ -755,6 +892,36 @@ impl LayoutEditor {
 #[cfg(test)]
 mod grid_tests {
     use super::*;
+    #[::core::prelude::v1::test]
+    fn sampled_grid_is_small_stable_and_uses_actual_filtered_types() {
+        let a = sampled_objects(&[30], &[], &[], false, 5, 123, None);
+        let b = sampled_objects(&[30], &[], &[], false, 5, 123, None);
+        assert_eq!(a.len(), 5);
+        assert_eq!(
+            a.iter().map(|o| &o.kind).collect::<Vec<_>>(),
+            b.iter().map(|o| &o.kind).collect::<Vec<_>>()
+        );
+        assert!(
+            a.iter()
+                .all(|o| o.group == 30 && type_catalog()[&30].contains(&o.kind))
+        );
+        assert!(type_catalog()[&30].contains(&"Avatar".to_owned()));
+        let colors: std::collections::HashSet<_> = a
+            .iter()
+            .map(|o| {
+                let c = background_color(None, o.states[0]).unwrap();
+                (
+                    (c.r * 255.).round() as u32,
+                    (c.g * 255.).round() as u32,
+                    (c.b * 255.).round() as u32,
+                )
+            })
+            .collect();
+        assert_eq!(colors.len(), 5);
+        assert!(sampled_objects(&[], &[], &[], false, 5, 1, None).is_empty());
+        let hidden: Vec<_> = overview::STATES.iter().map(|(id, _)| *id).collect();
+        assert!(sampled_objects(&[30], &hidden, &[], false, 5, 1, None).is_empty());
+    }
     #[::core::prelude::v1::test]
     fn synthetic_grid_covers_categories_and_state_filter_precedence() {
         for (_, ids) in overview::categories() {

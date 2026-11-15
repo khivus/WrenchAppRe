@@ -39,6 +39,7 @@ pub(super) struct CanvasStamp {
     fighters: usize,
     settings_open: bool,
     settings_revision: u64,
+    sample_rows: usize,
 }
 impl LayoutEditor {
     pub(super) fn cached_canvas(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -61,6 +62,7 @@ impl LayoutEditor {
             fighters: self.fighter_count,
             settings_open: self.settings_open,
             settings_revision: self.settings_revision,
+            sample_rows: self.store.read(cx).config().overview_preview_rows,
         };
         if self.canvas_preview.is_none() {
             let parent = cx.entity().downgrade();

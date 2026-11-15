@@ -16,6 +16,8 @@ pub struct Config {
     pub auto_backup: bool,
     #[serde(default)]
     pub force_dscan_max_range: bool,
+    #[serde(default = "default_overview_rows")]
+    pub overview_preview_rows: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<ThemePreference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -84,6 +86,10 @@ pub enum ThemePreference {
     Dark,
 }
 
+fn default_overview_rows() -> usize {
+    5
+}
+
 fn default_true() -> bool {
     true
 }
@@ -94,6 +100,7 @@ impl Default for Config {
             custom_eve_path: None,
             auto_backup: true,
             force_dscan_max_range: false,
+            overview_preview_rows: 5,
             theme: None,
             locale: None,
             default_sources: DefaultSources::default(),
@@ -153,6 +160,7 @@ mod tests {
         let config: Config = serde_json::from_str("{}").unwrap();
         assert!(config.auto_backup);
         assert!(!config.force_dscan_max_range);
+        assert_eq!(config.overview_preview_rows, 5);
         assert!(config.drone_group_pattern.is_none());
         assert!(!config.default_sources.has_any());
         for group in crate::copy::COPY_GROUPS {

@@ -200,6 +200,7 @@ impl LayoutEditor {
             }
         }));
 
+        subscriptions.push(cx.observe(&store, |_, _, cx| cx.notify()));
         let settings = cx.new(|cx| settings::DisplayEditor::new(file_path.clone(), window, cx));
         subscriptions.push(cx.subscribe(
             &settings,
