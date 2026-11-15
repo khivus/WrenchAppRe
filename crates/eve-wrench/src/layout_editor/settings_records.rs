@@ -101,7 +101,7 @@ impl DisplayEditor {
             }
             let sample = match kind.to_lowercase().as_str() {
                 "ship type" => "Arazu",
-                "pilot name" => "Syatoslav Trubochist",
+                "pilot name" => "Example Character",
                 "corp ticker" | "corporation" | "corp" => "WWWWW",
                 "alliance" | "alliance short name" => "WWWWW",
                 "ship name" => "Example ship",
@@ -177,7 +177,12 @@ impl DisplayEditor {
                                     )))
                                     .ghost()
                                     .xsmall()
-                                    .label(label)
+                                    .icon(if delta < 0 {
+                                        IconName::ArrowUp
+                                    } else {
+                                        IconName::ArrowDown
+                                    })
+                                    .tooltip(label)
                                     .disabled(
                                         (delta < 0 && index == 0)
                                             || (delta > 0 && index + 1 >= labels.len()),

@@ -101,6 +101,28 @@ impl SettingsDocument {
         {
             return Ok(());
         }
+        // Reordering native ship labels must preserve fields/types we do not
+        // understand, including client versions with numeric component types.
+        if self.kind == SettingsKind::User
+            && section == "overview"
+            && key == "shipLabels"
+            && let Some(original) = Self::get(&self.root, section, key).and_then(Value::as_array)
+            && let Some(reordered) = value.as_array()
+        {
+            let mut remaining = original.clone();
+            if reordered.len() == remaining.len()
+                && reordered.iter().all(|item| {
+                    if let Some(index) = remaining.iter().position(|old| old == item) {
+                        remaining.remove(index);
+                        true
+                    } else {
+                        false
+                    }
+                })
+            {
+                return Ok(());
+            }
+        }
         validate(self.kind, section, key, value)
     }
 

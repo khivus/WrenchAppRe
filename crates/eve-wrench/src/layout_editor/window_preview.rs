@@ -34,11 +34,11 @@ fn sample(column: &str, index: usize) -> String {
     match column {
         "ICON" => ["◇", "△", "□", "◈", "○"][index].into(),
         "NAME" => [
-            "Example pilot",
-            "Scout One",
-            "Logistics Two",
+            "Example Character",
+            "Caldari Citizen",
+            "Amarr Citizen",
             "Station services",
-            "Fleet commander",
+            "Minmatar Citizen",
         ][index]
             .into(),
         "TYPE" => ["Arazu", "Amarr Shuttle", "Basilisk", "Astrahus", "Loki"][index].into(),
@@ -61,6 +61,73 @@ fn sample(column: &str, index: usize) -> String {
         ][index]
             .into(),
         _ => "—".into(),
+    }
+}
+
+// One cached object per eligible group and relationship scenario. No captured
+// player names, ship identities, locations or display measurements enter it.
+#[derive(Clone)]
+struct GridObject {
+    group: i64,
+    kind: String,
+    states: Vec<i64>,
+    variant: usize,
+}
+fn grid() -> &'static [GridObject] {
+    static GRID: std::sync::OnceLock<Vec<GridObject>> = std::sync::OnceLock::new();
+    GRID.get_or_init(|| {
+        let names: std::collections::HashMap<_, _> =
+            overview::group_catalog().iter().cloned().collect();
+        overview::categories()
+            .into_iter()
+            .flat_map(|(_, groups)| groups)
+            .flat_map(|group| {
+                let kind = match group {
+                    25 => "Merlin",
+                    26 => "Caracal",
+                    27 => "Raven",
+                    547 => "Thanatos",
+                    6 => "Sun",
+                    7 => "Planet",
+                    15 => "Caldari Navy Assembly Plant",
+                    _ => names
+                        .get(&group)
+                        .map(String::as_str)
+                        .unwrap_or("Unknown object"),
+                }
+                .to_owned();
+                overview::STATES
+                    .iter()
+                    .map(|(id, _)| vec![*id])
+                    .chain([vec![11, 16], vec![12, 16], vec![14, 16]])
+                    .enumerate()
+                    .map(move |(variant, states)| GridObject {
+                        group,
+                        kind: kind.clone(),
+                        states,
+                        variant,
+                    })
+            })
+            .collect()
+    })
+}
+fn matches_preset(object: &GridObject, groups: &[i64], hidden: &[i64], always: &[i64]) -> bool {
+    groups.contains(&object.group)
+        && (object.states.iter().any(|id| always.contains(id))
+            || !object.states.iter().any(|id| hidden.contains(id)))
+}
+fn grid_cell(object: &GridObject, column: &str) -> String {
+    match column {
+        "TYPE" => object.kind.clone(),
+        "NAME" => [
+            "Example Character",
+            "Caldari Citizen",
+            "Amarr Citizen",
+            "Minmatar Citizen",
+            "Gallente Citizen",
+        ][object.variant % 5]
+            .into(),
+        _ => sample(column, object.variant % 5),
     }
 }
 
@@ -245,25 +312,112 @@ impl LayoutEditor {
                             })
                     })),
             );
-        let mut indexes: Vec<usize> = (0..5).collect();
+        let preset = self
+            .preview_settings
+            .doc(SettingsKind::User)
+            .and_then(|doc| doc.value("overview", "overviewProfilePresets"))
+            .and_then(|presets| {
+                presets
+                    .as_object()?
+                    .iter()
+                    .find(|(key, _)| {
+                        eve_wrench_core::display_settings::text(&serde_json::json!(key))
+                            == Some(tab.preset.as_str())
+                    })
+                    .map(|(_, value)| value)
+            });
+        let groups = overview::ids(preset.and_then(|p| p.get("bytes:groups")));
+        let hidden = overview::ids(preset.and_then(|p| p.get("bytes:filteredStates")));
+        let always = overview::ids(preset.and_then(|p| p.get("bytes:alwaysShownStates")));
+        static POLICIES: std::sync::OnceLock<std::collections::HashMap<i64, u8>> =
+            std::sync::OnceLock::new();
+        let policies = POLICIES.get_or_init(|| {
+            overview::categories()
+                .into_iter()
+                .flat_map(|(name, ids)| {
+                    let policy = match name.as_str() {
+                        "Ship" | "Drone" | "Fighter" | "Entity" | "NPC" => 0,
+                        "Structure" | "Station" | "Starbase" | "Sovereignty Structures" => 1,
+                        _ => 2,
+                    };
+                    ids.into_iter().map(move |id| (id, policy))
+                })
+                .collect()
+        });
+        let option = |key| {
+            self.preview_settings
+                .doc(SettingsKind::User)
+                .and_then(|d| d.value("overview", key))
+                .and_then(eve_wrench_core::display_settings::boolean)
+                .unwrap_or(false)
+        };
+        let structures = option("applyToStructures");
+        let others = option("applyToOtherObjects");
+        let mut objects: Vec<_> = grid()
+            .iter()
+            .filter(|o| {
+                let apply = match policies.get(&o.group) {
+                    Some(0) => true,
+                    Some(1) => structures,
+                    _ => others,
+                };
+                preset.is_none()
+                    || matches_preset(
+                        o,
+                        &groups,
+                        if apply { &hidden } else { &[] },
+                        if apply { &always } else { &[] },
+                    )
+            })
+            .collect();
         if let Some((column, ascending)) = &sort {
-            indexes.sort_by(|a, b| {
+            objects.sort_by_cached_key(|object| {
                 let numeric = match column.as_str() {
-                    "DISTANCE" => Some([3651., 4455., 15600., 179517444840., 87300.]),
-                    "VELOCITY" => Some([528., 527., 678.31, 0., 1450.]),
-                    "SIZE" => Some([135., 25., 115., 1000., 160.]),
-                    "RADIALVELOCITY" => Some([-24., 0., 85., 0., -112.]),
-                    "TRANSVERSALVELOCITY" => Some([74., 0., 67., 0., 350.]),
-                    "ANGULARVELOCITY" => Some([0.021, 0., 0.004, 0., 0.012]),
+                    "DISTANCE" => Some([3651i64, 4455, 15600, 179517444840, 87300]),
+                    "VELOCITY" => Some([528, 527, 678, 0, 1450]),
+                    "SIZE" => Some([135, 25, 115, 1000, 160]),
+                    "RADIALVELOCITY" => Some([-24, 0, 85, 0, -112]),
+                    "TRANSVERSALVELOCITY" => Some([74, 0, 67, 0, 350]),
+                    "ANGULARVELOCITY" => Some([21, 0, 4, 0, 12]),
                     _ => None,
                 };
-                let order = numeric
-                    .map(|v| v[*a].partial_cmp(&v[*b]).unwrap())
-                    .unwrap_or_else(|| sample(column, *a).cmp(&sample(column, *b)));
-                if *ascending { order } else { order.reverse() }
+                (
+                    numeric.map(|v| v[object.variant % 5]),
+                    if numeric.is_none() {
+                        grid_cell(object, column)
+                    } else {
+                        String::new()
+                    },
+                )
             });
+            if !ascending {
+                objects.reverse();
+            }
         }
-        for index in indexes {
+        let mut character_names: Vec<_> = self
+            .store
+            .read(cx)
+            .data()
+            .map(|data| {
+                data.entries()
+                    .filter_map(|entry| {
+                        entry
+                            .character
+                            .as_ref()
+                            .map(|character| character.name.clone())
+                    })
+                    .filter(|name| !name.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        character_names.sort();
+        character_names.dedup();
+        let limit = state
+            .rect
+            .map(|rect| (rect.height.max(0) as usize / 16).saturating_add(1))
+            .unwrap_or(20)
+            .min(256);
+        for (index, object) in objects.into_iter().take(limit).enumerate() {
             body = body.child(
                 h_flex()
                     .id(SharedString::from(format!(
@@ -279,11 +433,18 @@ impl LayoutEditor {
                     } else {
                         transparent_black()
                     })
-                    .children(
-                        columns
-                            .iter()
-                            .map(|(c, w)| cell(sample(c, index), *w as f32, scale, cx)),
-                    ),
+                    .children(columns.iter().map(|(c, w)| {
+                        cell(
+                            if c == "NAME" && !character_names.is_empty() {
+                                character_names[object.variant % character_names.len()].clone()
+                            } else {
+                                grid_cell(object, c)
+                            },
+                            *w as f32,
+                            scale,
+                            cx,
+                        )
+                    })),
             );
         }
         Some(body.into_any_element())
@@ -369,7 +530,7 @@ impl LayoutEditor {
                 .flex_1()
                 .min_w_0()
                 .overflow_hidden()
-                .children([("[16:02] EVE System > Channel changed",0xe55b54), ("Scout One > Gate is clear.",0x68bfe4),("Example pilot > Fleet ready.",0xcccccc),("Logistics Two > Align to the station and wait for the next fleet broadcast.",0xcccccc)].into_iter().enumerate().map(|(index,(message,color))|div().id(SharedString::from(format!("chat-message-{}-{index}", state.key))).test_support().flex_none().px(px(4.*scale)).text_color(rgb(color)).child(message)));
+                .children([("[16:02] EVE System > Channel changed",0xe55b54), ("Caldari Citizen > Gate is clear.",0x68bfe4),("Example Character > Fleet ready.",0xcccccc),("Amarr Citizen > Align to the station and wait for the next fleet broadcast.",0xcccccc)].into_iter().enumerate().map(|(index,(message,color))|div().id(SharedString::from(format!("chat-message-{}-{index}", state.key))).test_support().flex_none().px(px(4.*scale)).text_color(rgb(color)).child(message)));
             let names = v_flex()
                 .id(SharedString::from(format!("chat-members-{}", state.key)))
                 .test_support()
@@ -380,10 +541,10 @@ impl LayoutEditor {
                 .overflow_hidden()
                 .children(
                     [
-                        "♟ Scout One",
-                        "♟ Example pilot",
-                        "♟ Logistics Two",
-                        "♟ Fleet commander",
+                        "♟ Caldari Citizen",
+                        "♟ Example Character",
+                        "♟ Amarr Citizen",
+                        "♟ Minmatar Citizen",
                         "♟ Explorer Three",
                         "♟ Industrial Four",
                     ]
@@ -439,8 +600,8 @@ impl LayoutEditor {
                 ]))
                 .children(
                     [
-                        ("Scout One", "Zealot", "—"),
-                        ("Example pilot", "Arazu", "—"),
+                        ("Caldari Citizen", "Zealot", "—"),
+                        ("Example Character", "Arazu", "—"),
                         ("Demo Citadel", "Astrahus", "1,404 km"),
                     ]
                     .map(|(a, b, c)| {
@@ -470,20 +631,20 @@ impl LayoutEditor {
             "fleetwindow" | "fleet" => base()
                 .child(line("Fleet   Broadcasts   History", scale))
                 .child(line("▾ Fleet (4)", scale))
-                .child(line("   ★ Fleet commander", scale))
+                .child(line("   ★ Minmatar Citizen", scale))
                 .child(line("   ▾ Wing 1", scale))
                 .child(line("      ▾ Squad 1", scale))
-                .child(line("         Scout One", scale))
-                .child(line("         Logistics Two", scale))
+                .child(line("         Caldari Citizen", scale))
+                .child(line("         Amarr Citizen", scale))
                 .child(div().flex_1())
                 .child(line("⚑ Align to station · 16:02", scale))
-                .child(line("✚ Need shield · Example pilot", scale)),
+                .child(line("✚ Need shield · Example Character", scale)),
             "watchlistpanel" | "watchlist" | "watchlistWnd" => base().children(
                 [
-                    "★ Fleet commander   ▰▰▰",
-                    "  Scout One              ▰▰▰",
-                    "  Logistics Two          ▰▰▰",
-                    "  Example pilot          ▰▰▰",
+                    "★ Minmatar Citizen   ▰▰▰",
+                    "  Caldari Citizen              ▰▰▰",
+                    "  Amarr Citizen          ▰▰▰",
+                    "  Example Character          ▰▰▰",
                 ]
                 .map(|s| line(s, scale)),
             ),
@@ -508,7 +669,7 @@ impl LayoutEditor {
                         )
                         .child(
                             v_flex()
-                                .child(line("Eszur  (0.2)", scale))
+                                .child(line("Jita  (0.9)", scale))
                                 .child(line("35.4 AU", scale)),
                         ),
                 )
@@ -588,5 +749,28 @@ impl LayoutEditor {
                 .test_support()
                 .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod grid_tests {
+    use super::*;
+    #[::core::prelude::v1::test]
+    fn synthetic_grid_covers_categories_and_state_filter_precedence() {
+        for (_, ids) in overview::categories() {
+            for id in ids {
+                assert!(grid().iter().any(|o| o.group == id));
+            }
+        }
+        let object = GridObject {
+            group: 27,
+            kind: "Raven".into(),
+            states: vec![11, 16],
+            variant: 0,
+        };
+        assert!(!matches_preset(&object, &[27], &[16], &[]));
+        assert!(matches_preset(&object, &[27], &[16], &[11]));
+        assert!(!matches_preset(&object, &[25], &[], &[11]));
+        assert_eq!(grid_cell(&object, "TYPE"), "Raven");
     }
 }

@@ -639,3 +639,16 @@ fn overview_categories_include_ships_without_inventory_blueprints() {
             .any(|(name, _)| name.contains("Blueprint"))
     );
 }
+
+#[test]
+fn native_label_reordering_preserves_unrecognized_client_fields() {
+    let file = Fixture::new("user", true);
+    let (mut root, crc) = crate::marshal::load_settings_json(&file.0).unwrap();
+    let labels = json!([{"bytes:type":1,"bytes:color":4294967295u64},{"bytes:type":2,"bytes:future":"utf8:keep"}]);
+    root["bytes:overview"]["bytes:shipLabels"] = json!({"tuple":["long:1",labels]});
+    fs::write(&file.0, encode_settings_json(&root, crc).unwrap()).unwrap();
+    let mut doc = SettingsDocument::load(&file.0).unwrap();
+    doc.set("overview", "shipLabels", json!([labels[1], labels[0]]))
+        .unwrap();
+    assert_eq!(doc.value("overview", "shipLabels").unwrap()[0], labels[1]);
+}

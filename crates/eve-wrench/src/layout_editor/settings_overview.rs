@@ -125,6 +125,26 @@ impl DisplayEditor {
                     .into_any_element(),
             };
         };
+        match self.overview_section {
+            0 => self.render_tab_columns(&tab, window, cx),
+            1 => self.render_filters(Some(&tab), cx),
+            2 => self.render_appearance(window, cx),
+            4 => self.render_ships(window, cx),
+            _ => self.render_overview_options(cx),
+        }
+    }
+    pub(super) fn overview_header(&mut self, cx: &mut Context<Self>) -> AnyElement {
+        let tabs = self
+            .doc(SettingsKind::User)
+            .map(overview::tabs)
+            .unwrap_or_default();
+        let Some(tab) = tabs
+            .iter()
+            .find(|t| Some(&t.key) == self.selected_tab.as_ref())
+            .or_else(|| tabs.first())
+        else {
+            return div().into_any_element();
+        };
         let choices = tabs
             .iter()
             .map(|t| (t.key.clone(), format!("{} · {}", t.id + 1, t.name)))
@@ -144,15 +164,8 @@ impl DisplayEditor {
             },
             cx,
         );
-        let section = match self.overview_section {
-            0 => self.render_tab_columns(&tab, window, cx),
-            1 => self.render_filters(Some(&tab), cx),
-            2 => self.render_appearance(window, cx),
-            4 => self.render_ships(window, cx),
-            _ => self.render_overview_options(cx),
-        };
         v_flex()
-            .gap_3()
+            .gap_1()
             .child(picker)
             .child(
                 h_flex().gap_1().children(
@@ -175,7 +188,16 @@ impl DisplayEditor {
                         }),
                 ),
             )
-            .child(section)
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(if self.overview_section < 2 {
+                        "Selected tab / shared filter preset"
+                    } else {
+                        "Account-wide: applies to all overview windows and tabs"
+                    }),
+            )
             .into_any_element()
     }
     fn preset_options(&self) -> Vec<(String, String)> {
@@ -873,6 +895,7 @@ impl DisplayEditor {
                             .ghost()
                             .small()
                             .flex_1()
+                            .justify_start()
                             .label(format!(
                                 "{} {category} {count} / {}",
                                 if expanded { "▾" } else { "▸" },
@@ -925,7 +948,7 @@ impl DisplayEditor {
                     let preset = preset.clone();
                     group_rows.push(
                         h_flex()
-                            .pl_4()
+                            .pl_8()
                             .gap_2()
                             .child(
                                 div()

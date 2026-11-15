@@ -602,6 +602,7 @@ fn overview_scrolling_keeps_column_controls_bounded_and_reuses_the_canvas(cx: &m
         window.render_frame(cx);
         let settings = editor.read(cx).settings.clone();
         let canvas = editor.read(cx).canvas_preview.clone().unwrap();
+        let pinned_y = window.find("overview-tab").bounds().origin.y;
         let builds = canvas.read(cx).builds;
         window.scroll(
             "display-settings-list",
@@ -617,6 +618,7 @@ fn overview_scrolling_keeps_column_controls_bounded_and_reuses_the_canvas(cx: &m
             // `render_frame` deliberately forces a complete cache refresh.
             window.draw(cx).clear(cx);
         }
+        assert_eq!(window.find("overview-tab").bounds().origin.y, pinned_y);
         assert!(
             canvas.read(cx).builds <= builds + 5,
             "scrolling must reuse the canvas: before {builds}, after {}",

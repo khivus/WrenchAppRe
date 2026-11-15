@@ -1235,6 +1235,11 @@ impl Render for DisplayEditor {
             Page::Chats => self.render_chats(window, cx),
             Page::OverviewRecord => self.render_record(window, cx),
         };
+        let header = if self.page == Page::Overview {
+            Some(self.overview_header(cx))
+        } else {
+            None
+        };
         let saves = [SettingsKind::User, SettingsKind::Char]
             .into_iter()
             .map(|kind| {
@@ -1305,12 +1310,15 @@ impl Render for DisplayEditor {
             .border_l_1()
             .border_color(cx.theme().border)
             .child(
-                v_flex().flex_none().p_3().gap_2().child(
+                v_flex().flex_none().px_3().py_1().gap_1().child(
                     div()
                         .text_sm()
                         .child(t!(format!("display.pages.{}", self.page.id())).to_string()),
                 ),
             )
+            .when_some(header, |this, header| {
+                this.child(div().flex_none().px_3().pb_1().child(header))
+            })
             .child(
                 self.scroll
                     .view(
